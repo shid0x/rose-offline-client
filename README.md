@@ -1,3 +1,11 @@
+#Add ons on this version : 
+
+-2047 damage limit was removed
+-Cliking on the exit button on the UI will exit the game correctly 
+-You can now learn upgrade your skill learning ( the button for leveling up skill is hardcodded due to some DDS padding )
+
+
+
 # rose-offline-client
 An open source client for ROSE Online, compatible with the official 129_129en irose server or [rose-offline](https://github.com/exjam/rose-offline/).
 

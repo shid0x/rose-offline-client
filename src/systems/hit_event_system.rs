@@ -48,10 +48,10 @@ fn apply_damage(
     damage_digits_spawner: &DamageDigitsSpawner,
     client_entity_list: &mut ClientEntityList,
 ) {
-    if defender.health_points.hp < damage.amount as i32 {
+    if defender.health_points.hp < damage.amount {
         defender.health_points.hp = 0;
     } else {
-        defender.health_points.hp -= damage.amount as i32;
+        defender.health_points.hp -= damage.amount;
     }
 
     damage_digits_spawner.spawn(
@@ -60,7 +60,7 @@ fn apply_damage(
         defender
             .model_height
             .map_or(1.8, |model_height| model_height.height),
-        damage.amount,
+        damage.amount.max(0) as u32,
         client_entity_list
             .player_entity
             .map_or(false, |player_entity| defender.entity == player_entity),

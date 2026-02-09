@@ -29,10 +29,10 @@ fn apply_damage(
     is_killed: bool,
     client_entity_list: &mut ClientEntityList,
 ) {
-    if target.health_points.hp < damage.amount as i32 {
+    if target.health_points.hp < damage.amount {
         target.health_points.hp = 0;
     } else {
-        target.health_points.hp -= damage.amount as i32;
+        target.health_points.hp -= damage.amount;
     }
 
     if is_killed {

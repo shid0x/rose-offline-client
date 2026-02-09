@@ -4,15 +4,16 @@ use bevy::{
 };
 use bevy_egui::{egui, EguiContexts};
 
-use rose_data::AbilityType;
+use rose_data::{AbilityType, SkillId};
 use rose_data_irose::{IroseSkillPageType, SKILL_PAGE_SIZE};
 use rose_game_common::components::{CharacterInfo, SkillList, SkillPoints, SkillSlot};
+use rose_game_common::messages::client::ClientMessage;
 
 use crate::{
     bundles::ability_values_get_value,
     components::{Cooldowns, PlayerCharacter},
     events::PlayerCommandEvent,
-    resources::{GameData, UiResources},
+    resources::{GameConnection, GameData, UiResources},
     ui::{
         tooltips::{PlayerTooltipQuery, PlayerTooltipQueryItem, SkillTooltipType},
         ui_add_skill_tooltip,
@@ -40,6 +41,14 @@ const IID_TAB_PASSIVE: i32 = 41;
 // const IID_BTN_PASSIVE: i32 = 45;
 const IID_ZLISTBOX_PASSIVE: i32 = 46;
 // const IID_SCROLLBAR_PASSIVE: i32 = 47;
+const DEBUG_SKILL_UP_RECT_OVERLAY: bool = false;
+const SKILL_ROW_PLUS_OFFSET_X: f32 = 190.0;
+const SKILL_ROW_PLUS_OFFSET_Y: f32 = 8.0;
+// Calibration offsets for the skill '+' icon rect after XML-derived placement.
+// These values are applied to the final rect used by drawing, hit-testing, and tooltip anchoring.
+// Negative X moves left, positive Y moves down.
+const PLUS_NUDGE_X: f32 = -19.0;
+const PLUS_NUDGE_Y: f32 = 17.0;
 
 pub struct UiStateSkillList {
     current_page: i32,
@@ -57,6 +66,175 @@ impl Default for UiStateSkillList {
             scroll_index_passive: 0,
         }
     }
+}
+
+struct SkillUpButtonLayout {
+    row_x: f32,
+    row_y: f32,
+    row_width: f32,
+    row_height: f32,
+    row_step: f32,
+    plus_offset_x: f32,
+    plus_offset_y: f32,
+    plus_width: f32,
+    plus_height: f32,
+}
+
+fn can_level_up_skill_now(
+    game_data: &GameData,
+    player: &PlayerQueryItem,
+    player_tooltip_data: Option<&PlayerTooltipQueryItem>,
+    skill_slot: SkillSlot,
+    current_skill_id: SkillId,
+) -> Result<SkillId, &'static str> {
+    let current_skill_data = game_data
+        .skills
+        .get_skill(current_skill_id)
+        .ok_or("No current skill data")?;
+    let next_skill_id = SkillId::new(current_skill_id.get() + 1).ok_or("At max level")?;
+    let next_skill_data = game_data
+        .skills
+        .get_skill(next_skill_id)
+        .ok_or("At max level")?;
+
+    if next_skill_data.base_skill_id != current_skill_data.base_skill_id
+        || next_skill_data.level != current_skill_data.level + 1
+    {
+        return Err("At max level");
+    }
+
+    if player.skill_points.points < next_skill_data.learn_point_cost {
+        return Err("Not enough skill points");
+    }
+
+    if let Some(job_class_id) = next_skill_data.required_job_class {
+        if let Some(job_class) = game_data.job_class.get(job_class_id) {
+            if !job_class
+                .jobs
+                .contains(&rose_data::JobId::new(player.character_info.job))
+            {
+                return Err("Job requirement not met");
+            }
+        }
+    }
+
+    for &(required_skill_id, required_level) in next_skill_data.required_skills.iter() {
+        if let Some(required_skill_data) = game_data.skills.get_skill(
+            SkillId::new(required_skill_id.get() + required_level.max(1) as u16 - 1).unwrap(),
+        ) {
+            let Some((_, _, skill_level)) = player.skill_list.find_skill_level(
+                &game_data.skills,
+                required_skill_data
+                    .base_skill_id
+                    .unwrap_or(required_skill_id),
+            ) else {
+                return Err("Skill requirement not met");
+            };
+
+            if skill_level < required_level as u32 {
+                return Err("Skill requirement not met");
+            }
+        }
+    }
+
+    if let Some(player_tooltip_data) = player_tooltip_data {
+        for &(ability_type, required_value) in next_skill_data.required_ability.iter() {
+            let Some(current_value) = ability_values_get_value(
+                ability_type,
+                player_tooltip_data.ability_values,
+                Some(player_tooltip_data.character_info),
+                Some(player_tooltip_data.experience_points),
+                Some(player_tooltip_data.health_points),
+                Some(player_tooltip_data.inventory),
+                Some(player_tooltip_data.level),
+                Some(player_tooltip_data.mana_points),
+                Some(player_tooltip_data.move_speed),
+                Some(player_tooltip_data.skill_points),
+                Some(player_tooltip_data.stamina),
+                Some(player_tooltip_data.stat_points),
+                Some(player_tooltip_data.team),
+                Some(player_tooltip_data.union_membership),
+            ) else {
+                return Err("Ability requirement not met");
+            };
+
+            if current_value < required_value {
+                return Err("Ability requirement not met");
+            }
+        }
+    }
+
+    if player.skill_list.get_skill(skill_slot) != Some(current_skill_id) {
+        return Err("Invalid skill slot");
+    }
+
+    Ok(next_skill_id)
+}
+
+fn parse_skill_up_button_layout(
+    dialog: &Dialog,
+    ui_resources: &UiResources,
+) -> Option<SkillUpButtonLayout> {
+    let plus_normal = ui_resources.get_sprite(0, "UI09_BTN_PLUS_NORMAL")?;
+
+    let tabbed_pane = match dialog.get_widget(IID_TABBEDPANE)? {
+        Widget::TabbedPane(tabbed_pane) => tabbed_pane,
+        _ => return None,
+    };
+
+    let tab = tabbed_pane
+        .tabs
+        .iter()
+        .find(|tab| tab.id == IID_TAB_BASIC)
+        .or_else(|| tabbed_pane.tabs.first())?;
+
+    let mut list_offset_y = None;
+    let mut row_offsets = Vec::new();
+    let mut row_offset_x = None;
+    let mut row_width = None;
+    let mut row_height = None;
+
+    for widget in &tab.widgets {
+        match widget {
+            Widget::ZListbox(zlistbox) if zlistbox.id == IID_ZLISTBOX_BASIC => {
+                list_offset_y = Some(zlistbox.offset_y);
+            }
+            Widget::Image(image) if image.sprite_name == "UI09_MIDDLE" => {
+                row_offsets.push(image.offset_y);
+                row_offset_x = Some(image.offset_x);
+                row_width = Some(image.width);
+                row_height = Some(image.height);
+            }
+            _ => {}
+        }
+    }
+
+    let mut row_step = 44.0;
+    row_offsets.sort_by(f32::total_cmp);
+    for pair in row_offsets.windows(2) {
+        let delta = pair[1] - pair[0];
+        if delta > 0.0 {
+            row_step = delta;
+            break;
+        }
+    }
+
+    let row_offset_y = list_offset_y.or_else(|| row_offsets.first().copied())?;
+    let row_offset_x = row_offset_x.unwrap_or(0.0);
+    let row_width = row_width.unwrap_or(dialog.width);
+    let row_height = row_height.unwrap_or(45.0);
+
+    Some(SkillUpButtonLayout {
+        row_x: tabbed_pane.x + row_offset_x,
+        row_y: tabbed_pane.y + row_offset_y,
+        row_width,
+        row_height,
+        row_step,
+        plus_offset_x: SKILL_ROW_PLUS_OFFSET_X,
+        plus_offset_y: SKILL_ROW_PLUS_OFFSET_Y,
+        plus_width: plus_normal.width,
+        plus_height: plus_normal.height,
+    })
 }
 
 fn ui_add_skill_list_slot(
@@ -136,6 +314,7 @@ pub fn ui_skill_list_system(
     game_data: Res<GameData>,
     ui_resources: Res<UiResources>,
     dialog_assets: Res<Assets<Dialog>>,
+    game_connection: Option<Res<GameConnection>>,
 ) {
     let ui_state_skill_list = &mut *ui_state_skill_list;
     let dialog = if let Some(dialog) = dialog_assets.get(&ui_resources.dialog_skill_list) {
@@ -150,6 +329,11 @@ pub fn ui_skill_list_system(
         return;
     };
     let player_tooltip_data = query_player_tooltip.get_single().ok();
+    let skill_up_layout = parse_skill_up_button_layout(dialog, &ui_resources);
+    let plus_normal_sprite = ui_resources.get_sprite(0, "UI09_BTN_PLUS_NORMAL");
+    let plus_over_sprite = ui_resources.get_sprite(0, "UI09_BTN_PLUS_OVER");
+    let plus_down_sprite = ui_resources.get_sprite(0, "UI09_BTN_PLUS_DOWN");
+    let plus_disable_sprite = ui_resources.get_sprite(0, "UI09_BTN_PLUS_DISABLE");
 
     let listbox_extent =
         if let Some(Widget::ZListbox(listbox)) = dialog.get_widget(IID_ZLISTBOX_BASIC) {
@@ -161,8 +345,13 @@ pub fn ui_skill_list_system(
 
     let mut response_close_button = None;
     let mut response_skill_tree_button = None;
+    let mut debug_content_rect: Option<egui::Rect> = None;
+    let mut debug_plus_base_rect: Option<egui::Rect> = None;
+    let mut debug_plus_nudged_rect: Option<egui::Rect> = None;
+    let mut debug_anchor: Option<egui::Pos2> = None;
+    let mut debug_plus_rows: Vec<(egui::Rect, bool)> = Vec::new();
 
-    egui::Window::new("Skills")
+    let window_response = egui::Window::new("Skills")
         .frame(egui::Frame::none())
         .open(&mut ui_state_windows.skill_list_open)
         .title_bar(false)
@@ -170,6 +359,15 @@ pub fn ui_skill_list_system(
         .default_width(dialog.width)
         .default_height(dialog.height)
         .show(egui_context.ctx_mut(), |ui| {
+            // DLGSKILL widget coordinates are dialog-local. Convert to screen-space by using
+            // the actual content area origin of this egui window.
+            let dialog_screen_origin = ui.max_rect().min;
+            let dialog_content_rect =
+                egui::Rect::from_min_size(dialog_screen_origin, egui::vec2(dialog.width, dialog.height));
+            if DEBUG_SKILL_UP_RECT_OVERLAY {
+                debug_content_rect = Some(dialog_content_rect);
+            }
+
             dialog.draw(
                 ui,
                 DataBindings {
@@ -330,11 +528,116 @@ pub fn ui_skill_list_system(
                             }
                         }
 
-                        // TODO: Skill level up button
+                        if let Some(current_skill_id) = skill {
+                            let can_level_up_result = can_level_up_skill_now(
+                                &game_data,
+                                &player,
+                                player_tooltip_data.as_ref(),
+                                skill_slot,
+                                current_skill_id,
+                            );
+                            let can_level_up = can_level_up_result.is_ok();
+                            let disabled_reason = can_level_up_result.err();
+
+                            let (row_x, row_y, _row_width, _row_height, row_step, plus_offset_x, plus_offset_y, plus_w, plus_h) =
+                                if let Some(layout) = skill_up_layout.as_ref() {
+                                    (
+                                        layout.row_x,
+                                        layout.row_y,
+                                        layout.row_width,
+                                        layout.row_height,
+                                        layout.row_step,
+                                        layout.plus_offset_x,
+                                        layout.plus_offset_y,
+                                        layout.plus_width,
+                                        layout.plus_height,
+                                    )
+                                } else {
+                                    (
+                                        0.0,
+                                        listbox_pos.y,
+                                        223.0,
+                                        45.0,
+                                        44.0,
+                                        SKILL_ROW_PLUS_OFFSET_X,
+                                        SKILL_ROW_PLUS_OFFSET_Y,
+                                        16.0,
+                                        16.0,
+                                    )
+                                };
+                            let row_min = dialog_screen_origin + egui::vec2(row_x, row_y + i as f32 * row_step);
+                            let plus_base_rect = egui::Rect::from_min_size(
+                                row_min + egui::vec2(plus_offset_x, plus_offset_y),
+                                egui::vec2(plus_w, plus_h),
+                            );
+                            let up_rect =
+                                plus_base_rect.translate(egui::vec2(PLUS_NUDGE_X, PLUS_NUDGE_Y));
+
+                            let mut response_upgrade_button = ui.allocate_rect(
+                                up_rect,
+                                if can_level_up {
+                                    egui::Sense::click()
+                                } else {
+                                    egui::Sense::hover()
+                                },
+                            );
+
+                            if DEBUG_SKILL_UP_RECT_OVERLAY && debug_plus_nudged_rect.is_none() {
+                                debug_plus_base_rect = Some(plus_base_rect);
+                                debug_plus_nudged_rect = Some(up_rect);
+                                debug_anchor = Some(up_rect.center());
+                            }
+                            if DEBUG_SKILL_UP_RECT_OVERLAY {
+                                debug_plus_rows.push((up_rect, can_level_up));
+                            }
+
+                            let sprite_to_draw = if can_level_up {
+                                if response_upgrade_button.is_pointer_button_down_on() {
+                                    plus_down_sprite
+                                        .as_ref()
+                                        .or(plus_over_sprite.as_ref())
+                                        .or(plus_normal_sprite.as_ref())
+                                } else if response_upgrade_button.hovered() {
+                                    plus_over_sprite
+                                        .as_ref()
+                                        .or(plus_normal_sprite.as_ref())
+                                } else {
+                                    plus_normal_sprite.as_ref()
+                                }
+                            } else {
+                                plus_disable_sprite.as_ref()
+                            };
+
+                            if let Some(sprite) = sprite_to_draw {
+                                sprite.draw(ui, up_rect.min);
+                            } else if response_upgrade_button.hovered() && can_level_up {
+                                ui.painter().rect_filled(
+                                    up_rect,
+                                    1.0,
+                                    egui::Color32::from_rgba_premultiplied(40, 180, 40, 120),
+                                );
+                            }
+
+                            if can_level_up {
+                                response_upgrade_button = response_upgrade_button.on_hover_text("Up");
+                            } else if let Some(reason) = disabled_reason {
+                                response_upgrade_button =
+                                    response_upgrade_button.on_hover_text(reason);
+                            }
+
+                            if can_level_up && response_upgrade_button.clicked() {
+                                if let Some(game_connection) = game_connection.as_ref() {
+                                    game_connection
+                                        .client_message_tx
+                                        .send(ClientMessage::LevelUpSkill { skill_slot })
+                                        .ok();
+                                }
+                            }
+                        }
 
                         ui_add_skill_list_slot(
                             ui,
-                            ui.min_rect().min + egui::vec2(start_x, start_y + 3.0),
+                            dialog_screen_origin + egui::vec2(start_x, start_y + 3.0),
                             skill_slot,
                             &player,
                             player_tooltip_data.as_ref(),
@@ -352,6 +655,54 @@ pub fn ui_skill_list_system(
                 },
             );
         });
+
+    if DEBUG_SKILL_UP_RECT_OVERLAY {
+        let debug_painter = egui_context.ctx_mut().debug_painter();
+        if let Some(window_rect) = window_response.as_ref().map(|r| r.response.rect) {
+            debug_painter.rect_stroke(
+                window_rect,
+                0.0,
+                egui::Stroke::new(1.0, egui::Color32::YELLOW),
+            );
+        }
+        if let Some(content_rect) = debug_content_rect {
+            debug_painter.rect_stroke(
+                content_rect,
+                0.0,
+                egui::Stroke::new(1.0, egui::Color32::LIGHT_BLUE),
+            );
+        }
+        if let Some(base_rect) = debug_plus_base_rect {
+            debug_painter.rect_stroke(
+                base_rect,
+                0.0,
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(180, 60, 255)),
+            );
+        }
+        if let Some(nudged_rect) = debug_plus_nudged_rect {
+            debug_painter.rect_stroke(
+                nudged_rect,
+                0.0,
+                egui::Stroke::new(1.0, egui::Color32::GREEN),
+            );
+        }
+        if let Some(anchor) = debug_anchor {
+            debug_painter.circle_filled(anchor, 2.5, egui::Color32::RED);
+        }
+        for (index, (row_rect, upgradable)) in debug_plus_rows.iter().enumerate() {
+            debug_painter.text(
+                row_rect.right_top() + egui::vec2(3.0, 0.0),
+                egui::Align2::LEFT_TOP,
+                format!("row {}: {}", index, if *upgradable { "UP" } else { "NO" }),
+                egui::FontId::monospace(10.0),
+                if *upgradable {
+                    egui::Color32::GREEN
+                } else {
+                    egui::Color32::GRAY
+                },
+            );
+        }
+    }
 
     if response_skill_tree_button.map_or(false, |r| r.clicked()) {
         ui_state_windows.skill_tree_open = !ui_state_windows.skill_tree_open;
