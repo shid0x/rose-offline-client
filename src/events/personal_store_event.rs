@@ -14,6 +14,9 @@ pub enum PersonalStoreEvent {
         slot_index: usize,
         item: Item,
     },
+    BuyItemBySlot {
+        slot_index: usize,
+    },
     UpdateBuyList {
         entity: Entity,
         item_list: Vec<(usize, Option<Item>)>,

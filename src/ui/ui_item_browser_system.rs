@@ -174,7 +174,10 @@ pub fn ui_item_browser_system(
                 if ui_state_item_browser.filter_item_type != previous_filter {
                     refresh_item_results(&mut ui_state_item_browser, &game_data);
                 }
-                ui.label(format!("Matches: {}", ui_state_item_browser.filtered_items.len()));
+                ui.label(format!(
+                    "Matches: {}",
+                    ui_state_item_browser.filtered_items.len()
+                ));
             });
 
             ui.separator();

@@ -12,7 +12,7 @@ use rose_game_common::components::{
 
 use crate::{
     components::{Cooldowns, PlayerCharacter},
-    events::{NumberInputDialogEvent, PlayerCommandEvent},
+    events::{NumberInputDialogEvent, PersonalStoreEvent, PlayerCommandEvent},
     resources::{GameData, UiResources},
     ui::{
         tooltips::{PlayerTooltipQuery, PlayerTooltipQueryItem},
@@ -149,7 +149,11 @@ fn drag_accepts_equipment(drag_source: &DragAndDropId) -> bool {
 }
 
 fn drag_accepts_equipment_or_bank(drag_source: &DragAndDropId) -> bool {
-    drag_accepts_equipment(drag_source) || matches!(drag_source, DragAndDropId::Bank(_))
+    drag_accepts_equipment(drag_source)
+        || matches!(
+            drag_source,
+            DragAndDropId::Bank(_) | DragAndDropId::PersonalStoreSell(_)
+        )
 }
 
 fn drag_accepts_consumables(drag_source: &DragAndDropId) -> bool {
@@ -160,7 +164,11 @@ fn drag_accepts_consumables(drag_source: &DragAndDropId) -> bool {
 }
 
 fn drag_accepts_consumables_or_bank(drag_source: &DragAndDropId) -> bool {
-    drag_accepts_consumables(drag_source) || matches!(drag_source, DragAndDropId::Bank(_))
+    drag_accepts_consumables(drag_source)
+        || matches!(
+            drag_source,
+            DragAndDropId::Bank(_) | DragAndDropId::PersonalStoreSell(_)
+        )
 }
 
 fn drag_accepts_materials(drag_source: &DragAndDropId) -> bool {
@@ -172,7 +180,11 @@ fn drag_accepts_materials(drag_source: &DragAndDropId) -> bool {
 }
 
 fn drag_accepts_materials_or_bank(drag_source: &DragAndDropId) -> bool {
-    drag_accepts_materials(drag_source) || matches!(drag_source, DragAndDropId::Bank(_))
+    drag_accepts_materials(drag_source)
+        || matches!(
+            drag_source,
+            DragAndDropId::Bank(_) | DragAndDropId::PersonalStoreSell(_)
+        )
 }
 
 fn drag_accepts_vehicles(drag_source: &DragAndDropId) -> bool {
@@ -184,7 +196,11 @@ fn drag_accepts_vehicles(drag_source: &DragAndDropId) -> bool {
 }
 
 fn drag_accepts_vehicles_or_bank(drag_source: &DragAndDropId) -> bool {
-    drag_accepts_vehicles(drag_source) || matches!(drag_source, DragAndDropId::Bank(_))
+    drag_accepts_vehicles(drag_source)
+        || matches!(
+            drag_source,
+            DragAndDropId::Bank(_) | DragAndDropId::PersonalStoreSell(_)
+        )
 }
 
 pub trait GetItem {
@@ -225,6 +241,7 @@ fn ui_add_inventory_slot(
     item_slot_map: &mut EnumMap<InventoryPageType, Vec<ItemSlot>>,
     ui_state_dnd: &mut UiStateDragAndDrop,
     player_command_events: &mut EventWriter<PlayerCommandEvent>,
+    personal_store_events: &mut EventWriter<PersonalStoreEvent>,
 ) {
     let drag_accepts = match inventory_slot {
         ItemSlot::Inventory(page_type, _) => match page_type {
@@ -397,6 +414,12 @@ fn ui_add_inventory_slot(
         ));
     }
 
+    if let Some(DragAndDropId::PersonalStoreSell(slot_index)) = dropped_item {
+        if matches!(inventory_slot, ItemSlot::Inventory(_, _)) {
+            personal_store_events.send(PersonalStoreEvent::BuyItemBySlot { slot_index });
+        }
+    }
+
     if let Some(item_slot) = equip_equipment_inventory_slot {
         player_command_events.send(PlayerCommandEvent::EquipEquipment(item_slot));
     }
@@ -467,6 +490,7 @@ pub fn ui_inventory_system(
     game_data: Res<GameData>,
     ui_resources: Res<UiResources>,
     mut player_command_events: EventWriter<PlayerCommandEvent>,
+    mut personal_store_events: EventWriter<PersonalStoreEvent>,
     mut number_input_dialog_events: EventWriter<NumberInputDialogEvent>,
 ) {
     let ui_state_inventory = &mut *ui_state_inventory;
@@ -550,6 +574,7 @@ pub fn ui_inventory_system(
                                         &mut ui_state_inventory.item_slot_map,
                                         &mut ui_state_dnd,
                                         &mut player_command_events,
+                                        &mut personal_store_events,
                                     );
                                 }
                             }
@@ -581,6 +606,7 @@ pub fn ui_inventory_system(
                                         &mut ui_state_inventory.item_slot_map,
                                         &mut ui_state_dnd,
                                         &mut player_command_events,
+                                        &mut personal_store_events,
                                     );
                                 }
                             }
@@ -615,10 +641,33 @@ pub fn ui_inventory_system(
                                 &mut ui_state_inventory.item_slot_map,
                                 &mut ui_state_dnd,
                                 &mut player_command_events,
+                                &mut personal_store_events,
                             );
                         }
 
                         ui.end_row();
+                    }
+
+                    // Allow dropping a personal shop item anywhere on the inventory panel.
+                    let panel_rect = egui::Rect::from_min_size(
+                        ui.min_rect().min + egui::vec2(12.0, y_start),
+                        egui::vec2(5.0 * 41.0, 6.0 * 41.0),
+                    );
+                    let panel_response =
+                        ui.allocate_rect(panel_rect, egui::Sense::click_and_drag());
+                    if panel_response.hovered() {
+                        ui.ctx().input(|input| {
+                            if input.pointer.any_released()
+                                && !input.pointer.button_down(egui::PointerButton::Primary)
+                            {
+                                if let Some(DragAndDropId::PersonalStoreSell(slot_index)) =
+                                    ui_state_dnd.dragged_item.take()
+                                {
+                                    personal_store_events
+                                        .send(PersonalStoreEvent::BuyItemBySlot { slot_index });
+                                }
+                            }
+                        });
                     }
 
                     ui.allocate_ui_at_rect(

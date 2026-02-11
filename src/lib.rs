@@ -104,13 +104,13 @@ use ui::{
     ui_debug_npc_list_system, ui_debug_physics_system, ui_debug_render_system,
     ui_debug_skill_list_system, ui_debug_zone_lighting_system, ui_debug_zone_list_system,
     ui_debug_zone_time_system, ui_drag_and_drop_system, ui_game_menu_system, ui_hotbar_system,
-    ui_inventory_system, ui_item_browser_system, ui_item_drop_name_system, ui_login_system, ui_message_box_system,
-    ui_minimap_system, ui_npc_store_system, ui_number_input_dialog_system, ui_party_option_system,
-    ui_party_system, ui_personal_store_system, ui_player_info_system, ui_quest_list_system,
-    ui_respawn_system, ui_selected_target_system, ui_server_select_system, ui_settings_system,
-    ui_skill_list_system, ui_skill_tree_system, ui_sound_event_system, ui_status_effects_system,
-    ui_window_sound_system, widgets::Dialog, DialogLoader, UiSoundEvent, UiStateDebugWindows,
-    UiStateDragAndDrop, UiStateWindows,
+    ui_inventory_system, ui_item_browser_system, ui_item_drop_name_system, ui_login_system,
+    ui_message_box_system, ui_minimap_system, ui_npc_store_system, ui_number_input_dialog_system,
+    ui_party_option_system, ui_party_system, ui_personal_store_system, ui_player_info_system,
+    ui_player_shop_system, ui_quest_list_system, ui_respawn_system, ui_selected_target_system,
+    ui_server_select_system, ui_settings_system, ui_skill_list_system, ui_skill_tree_system,
+    ui_sound_event_system, ui_status_effects_system, ui_window_sound_system, widgets::Dialog,
+    DialogLoader, UiSoundEvent, UiStateDebugWindows, UiStateDragAndDrop, UiStateWindows,
 };
 use vfs_asset_io::VfsAssetIo;
 use zms_asset_loader::{ZmsAssetLoader, ZmsMaterialNumFaces, ZmsNoSkinAssetLoader};
@@ -889,6 +889,7 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
                 ui_create_clan_system,
                 ui_inventory_system,
                 ui_item_browser_system,
+                ui_player_shop_system,
                 ui_game_menu_system.after(ui_character_info_system),
                 ui_hotbar_system,
                 ui_minimap_system,

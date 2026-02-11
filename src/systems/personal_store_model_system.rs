@@ -1,6 +1,6 @@
 use bevy::{
     hierarchy::DespawnRecursiveExt,
-    prelude::{AssetServer, Assets, Changed, Commands, Entity, Query, Res, ResMut},
+    prelude::{AssetServer, Assets, Changed, Commands, Entity, Query, Res, ResMut, Without},
 };
 
 use crate::{
@@ -22,6 +22,8 @@ pub fn personal_store_model_system(
     asset_server: Res<AssetServer>,
     model_loader: Res<ModelLoader>,
     mut object_materials: ResMut<Assets<ObjectMaterial>>,
+    query_entities: Query<Entity>,
+    query_stale_models: Query<(Entity, &PersonalStoreModel), Without<PersonalStore>>,
 ) {
     for (entity, personal_store, personal_store_model) in query.iter_mut() {
         if let Some(personal_store) = personal_store {
@@ -32,9 +34,11 @@ pub fn personal_store_model_system(
                 }
 
                 // Despawn previous model
-                commands
-                    .entity(personal_store_model.model)
-                    .despawn_recursive();
+                if query_entities.get(personal_store_model.model).is_ok() {
+                    commands
+                        .entity(personal_store_model.model)
+                        .despawn_recursive();
+                }
             }
 
             // Spawn new model
@@ -53,15 +57,20 @@ pub fn personal_store_model_system(
             }
 
             commands.entity(entity).remove_and_despawn_collider();
-        } else if let Some(personal_store_model) = personal_store_model {
-            // Despawn and remove model
+        }
+    }
+
+    // Component removal does not match Changed<PersonalStore>, so explicitly clean up stale
+    // personal store models that no longer have a PersonalStore component.
+    for (entity, personal_store_model) in query_stale_models.iter() {
+        if query_entities.get(personal_store_model.model).is_ok() {
             commands
                 .entity(personal_store_model.model)
                 .despawn_recursive();
-            commands
-                .entity(entity)
-                .remove::<PersonalStoreModel>()
-                .remove_and_despawn_collider();
         }
+        commands
+            .entity(entity)
+            .remove::<PersonalStoreModel>()
+            .remove_and_despawn_collider();
     }
 }

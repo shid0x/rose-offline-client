@@ -1967,8 +1967,34 @@ pub fn game_connection_system(
                 }
             }
             Ok(ServerMessage::ClosePersonalStore { entity_id }) => {
-                if let Some(entity) = client_entity_list.get(entity_id) {
-                    commands.entity(entity).remove::<PersonalStore>();
+                let target_entity = client_entity_list
+                    .get(entity_id)
+                    .or_else(|| {
+                        if client_entity_list.player_entity_id == Some(entity_id) {
+                            client_entity_list.player_entity
+                        } else {
+                            None
+                        }
+                    });
+
+                if let Some(entity) = target_entity {
+                    log::info!(
+                        "personal-store: close received entity_id={} entity={:?}",
+                        entity_id.0,
+                        entity
+                    );
+                    let mut entity_commands = commands.entity(entity);
+                    entity_commands.remove::<PersonalStore>();
+
+                    // Ensure local command state exits PersonalStore immediately so movement
+                    // can resume even before further server movement updates arrive.
+                    entity_commands.insert(Command::with_stop());
+                    entity_commands.insert(NextCommand::with_stop());
+                } else {
+                    log::warn!(
+                        "personal-store: close received for unknown entity_id={}",
+                        entity_id.0
+                    );
                 }
             }
             Ok(ServerMessage::PersonalStoreItemList { sell_items, buy_items  }) => {

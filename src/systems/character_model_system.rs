@@ -1,6 +1,9 @@
 use bevy::{
     hierarchy::DespawnRecursiveExt,
-    prelude::{AssetServer, Assets, Changed, Commands, Entity, Or, Query, Res, ResMut},
+    prelude::{
+        AssetServer, Assets, Changed, Commands, Entity, Or, Query, RemovedComponents, Res, ResMut,
+        Without,
+    },
     render::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes},
 };
 
@@ -33,6 +36,9 @@ pub fn character_model_update_system(
             Changed<PersonalStore>,
         )>,
     >,
+    query_restore_from_personal_store: Query<(&CharacterInfo, &Equipment), Without<PersonalStore>>,
+    mut removed_personal_store: RemovedComponents<PersonalStore>,
+    query_entities: Query<Entity>,
     asset_server: Res<AssetServer>,
     model_loader: Res<ModelLoader>,
     mut object_materials: ResMut<Assets<ObjectMaterial>>,
@@ -50,6 +56,36 @@ pub fn character_model_update_system(
         personal_store,
     ) in query.iter_mut()
     {
+        if personal_store.is_some() {
+            if let Some(current_character_model) = current_character_model.as_mut() {
+                // Personal store has its own model; remove character model to avoid overlap.
+                for (_, (_, model_parts)) in current_character_model.model_parts.iter_mut() {
+                    for part_entity in model_parts.drain(..) {
+                        if query_entities.get(part_entity).is_ok() {
+                            commands.entity(part_entity).despawn_recursive();
+                        }
+                    }
+                }
+            }
+
+            if let Some(current_skinned_mesh) = current_skinned_mesh.as_mut() {
+                for bone_entity in current_skinned_mesh.joints.drain(..) {
+                    if query_entities.get(bone_entity).is_ok() {
+                        commands.entity(bone_entity).despawn_recursive();
+                    }
+                }
+            }
+
+            commands
+                .entity(entity)
+                .remove_and_despawn_collider()
+                .remove::<CharacterBlinkTimer>()
+                .remove::<CharacterModel>()
+                .remove::<SkinnedMesh>()
+                .remove::<DummyBoneOffset>();
+            continue;
+        }
+
         if let Some(current_character_model) = current_character_model.as_mut() {
             if character_info.gender == current_character_model.gender {
                 // Update existing model
@@ -76,32 +112,23 @@ pub fn character_model_update_system(
             // Despawn model parts
             for (_, (_, model_parts)) in current_character_model.model_parts.iter_mut() {
                 for part_entity in model_parts.drain(..) {
-                    commands.entity(part_entity).despawn_recursive();
+                    if query_entities.get(part_entity).is_ok() {
+                        commands.entity(part_entity).despawn_recursive();
+                    }
                 }
             }
 
             // Despawn model skeleton
             if let Some(current_skinned_mesh) = current_skinned_mesh.as_mut() {
                 for bone_entity in current_skinned_mesh.joints.drain(..) {
-                    commands.entity(bone_entity).despawn_recursive();
+                    if query_entities.get(bone_entity).is_ok() {
+                        commands.entity(bone_entity).despawn_recursive();
+                    }
                 }
             }
 
             // Remove the old model collider
             commands.entity(entity).remove_and_despawn_collider();
-
-            if personal_store.is_some() {
-                commands
-                    .entity(entity)
-                    .remove::<CharacterBlinkTimer>()
-                    .remove::<CharacterModel>()
-                    .remove::<SkinnedMesh>()
-                    .remove::<DummyBoneOffset>();
-            }
-        }
-
-        if personal_store.is_some() {
-            continue;
         }
 
         let (character_model, skinned_mesh, dummy_bone_offset) = model_loader
@@ -139,5 +166,35 @@ pub fn character_model_update_system(
         } else {
             entity_commands.insert(dummy_bone_offset);
         }
+    }
+
+    // RemovedComponents<T> does not trigger Changed<T>, so explicitly rebuild character model
+    // when PersonalStore is removed (shop close).
+    for entity in removed_personal_store.iter() {
+        let Ok((character_info, equipment)) = query_restore_from_personal_store.get(entity) else {
+            continue;
+        };
+
+        let (character_model, skinned_mesh, dummy_bone_offset) = model_loader
+            .spawn_character_model(
+                &mut commands,
+                &asset_server,
+                &mut object_materials,
+                &mut particle_materials,
+                &mut effect_mesh_materials,
+                &mut skinned_mesh_inverse_bindposes_assets,
+                entity,
+                character_info,
+                equipment,
+            );
+
+        commands
+            .entity(entity)
+            .insert(CharacterBlinkTimer::new())
+            .remove_and_despawn_collider()
+            .remove::<ModelHeight>()
+            .insert(character_model)
+            .insert(skinned_mesh)
+            .insert(dummy_bone_offset);
     }
 }

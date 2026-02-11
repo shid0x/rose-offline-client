@@ -1,13 +1,13 @@
 use bevy::{
     ecs::query::WorldQuery,
-    prelude::{Children, Entity, Local, Or, Query, Res, ResMut, Visibility, With},
+    prelude::{Children, Entity, Local, Or, Parent, Query, Res, ResMut, Visibility, With},
 };
 use rose_game_common::components::Npc;
 
 use crate::{
     components::{
         Dead, NameTag, NameTagEntity, NameTagHealthbarBackground, NameTagHealthbarForeground,
-        NameTagTargetMark,
+        NameTagTargetMark, NameTagType, PersonalStore,
     },
     resources::{NameTagSettings, SelectedTarget},
 };
@@ -25,16 +25,36 @@ pub struct NameTagQuery<'w> {
     children: &'w Children,
 }
 
+fn is_store_name_tag(
+    name_tag_entity: Entity,
+    query_parent: &Query<&Parent>,
+    query_personal_store: &Query<(), With<PersonalStore>>,
+) -> bool {
+    query_parent
+        .get(name_tag_entity)
+        .ok()
+        .map_or(false, |parent| query_personal_store.contains(parent.get()))
+}
+
 pub fn name_tag_visibility_system(
     mut state: Local<NameTagVisibility>,
     mut selected_target: ResMut<SelectedTarget>,
     mut query_visibility: Query<&mut Visibility>,
     query_name_tag: Query<NameTagQuery>,
     query_name_tag_entity: Query<&NameTagEntity>,
+    query_name_tag_parent: Query<&Parent>,
+    query_personal_store: Query<(), With<PersonalStore>>,
     query_name_tag_selected: Query<
         Entity,
         Or<(
             With<NameTagTargetMark>,
+            With<NameTagHealthbarBackground>,
+            With<NameTagHealthbarForeground>,
+        )>,
+    >,
+    query_name_tag_healthbar: Query<
+        Entity,
+        Or<(
             With<NameTagHealthbarBackground>,
             With<NameTagHealthbarForeground>,
         )>,
@@ -74,7 +94,12 @@ pub fn name_tag_visibility_system(
             if let Ok(name_tag) = query_name_tag.get(previous_entity) {
                 // Restore unselected visibility
                 if let Ok(mut visibility) = query_visibility.get_mut(previous_entity) {
-                    if name_tag_settings.show_all[name_tag.name_tag.name_tag_type] {
+                    if is_store_name_tag(
+                        previous_entity,
+                        &query_name_tag_parent,
+                        &query_personal_store,
+                    ) || name_tag_settings.show_all[name_tag.name_tag.name_tag_type]
+                    {
                         *visibility = Visibility::Inherited;
                     } else {
                         *visibility = Visibility::Hidden;
@@ -98,7 +123,12 @@ pub fn name_tag_visibility_system(
             if let Ok(name_tag) = query_name_tag.get(previous_entity) {
                 // Restore unselected visibility
                 if let Ok(mut visibility) = query_visibility.get_mut(previous_entity) {
-                    if name_tag_settings.show_all[name_tag.name_tag.name_tag_type] {
+                    if is_store_name_tag(
+                        previous_entity,
+                        &query_name_tag_parent,
+                        &query_personal_store,
+                    ) || name_tag_settings.show_all[name_tag.name_tag.name_tag_type]
+                    {
                         *visibility = Visibility::Inherited;
                     } else {
                         *visibility = Visibility::Hidden;
@@ -121,15 +151,26 @@ pub fn name_tag_visibility_system(
 
     if let Some(entity) = selected_name_tag_entity {
         if let Ok(name_tag) = query_name_tag.get(entity) {
+            let is_store_tag =
+                is_store_name_tag(entity, &query_name_tag_parent, &query_personal_store);
+
             // Name tag is always visible when selected
             if let Ok(mut visibility) = query_visibility.get_mut(entity) {
                 *visibility = Visibility::Inherited;
             }
 
-            // All name tag children are visible when selected
+            // All name tag children are visible when selected, except store owner
+            // health bars which should never be shown for personal stores or characters.
             for &child in name_tag.children.iter() {
                 if let Ok(mut visibility) = query_visibility.get_mut(child) {
-                    *visibility = Visibility::Inherited;
+                    if query_name_tag_healthbar.contains(child)
+                        && (is_store_tag
+                            || matches!(name_tag.name_tag.name_tag_type, NameTagType::Character))
+                    {
+                        *visibility = Visibility::Hidden;
+                    } else {
+                        *visibility = Visibility::Inherited;
+                    }
                 }
             }
         }

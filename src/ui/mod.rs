@@ -40,6 +40,7 @@ mod ui_party_option_system;
 mod ui_party_system;
 mod ui_personal_store_system;
 mod ui_player_info_system;
+mod ui_player_shop_system;
 mod ui_quest_list_system;
 mod ui_respawn_system;
 mod ui_selected_target_system;
@@ -65,6 +66,7 @@ pub struct UiStateWindows {
     pub party_open: bool,
     pub party_options_open: bool,
     pub item_browser_open: bool,
+    pub player_shop_open: bool,
 
     // Below are only opened via in game events rather than directly
     pub bank_open: bool,
@@ -117,6 +119,7 @@ pub use ui_party_option_system::ui_party_option_system;
 pub use ui_party_system::ui_party_system;
 pub use ui_personal_store_system::ui_personal_store_system;
 pub use ui_player_info_system::ui_player_info_system;
+pub use ui_player_shop_system::ui_player_shop_system;
 pub use ui_quest_list_system::ui_quest_list_system;
 pub use ui_respawn_system::ui_respawn_system;
 pub use ui_selected_target_system::ui_selected_target_system;

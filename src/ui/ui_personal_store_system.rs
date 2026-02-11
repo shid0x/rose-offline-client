@@ -6,7 +6,10 @@ use bevy::{
 };
 use bevy_egui::{egui, EguiContexts};
 use rose_data::Item;
-use rose_game_common::{components::Money, messages::client::ClientMessage};
+use rose_game_common::{
+    components::{Inventory, Money},
+    messages::client::ClientMessage,
+};
 
 use crate::{
     components::{ClientEntity, PersonalStore, PlayerCharacter, Position},
@@ -119,6 +122,67 @@ fn ui_add_store_item_slot(
     });
 }
 
+fn send_buy_request(
+    ui_state: &UiPersonalStoreState,
+    slot_index: usize,
+    item: Item,
+    player_inventory: &Inventory,
+    game_connection: &Option<Res<GameConnection>>,
+    query_personal_store: &Query<(&ClientEntity, &PersonalStore, &Position), With<PersonalStore>>,
+    message_box_events: &mut EventWriter<MessageBoxEvent>,
+) {
+    let Some((_, price)) = ui_state
+        .store_sell_items
+        .get(slot_index)
+        .and_then(|slot| slot.as_ref())
+    else {
+        message_box_events.send(MessageBoxEvent::Show {
+            message: String::from("This shop slot is no longer available."),
+            modal: false,
+            ok: None,
+            cancel: None,
+        });
+        return;
+    };
+
+    if player_inventory.money < *price {
+        message_box_events.send(MessageBoxEvent::Show {
+            message: String::from("Not enough Zuly."),
+            modal: false,
+            ok: None,
+            cancel: None,
+        });
+        return;
+    }
+
+    let mut inventory_after_purchase = player_inventory.clone();
+    if inventory_after_purchase.try_add_item(item.clone()).is_err() {
+        message_box_events.send(MessageBoxEvent::Show {
+            message: String::from("Not enough inventory space."),
+            modal: false,
+            ok: None,
+            cancel: None,
+        });
+        return;
+    }
+
+    if let Some((store_client_entity, _, _)) = ui_state
+        .store_owner
+        .and_then(|entity| query_personal_store.get(entity).ok())
+    {
+        if let Some(game_connection) = game_connection {
+            game_connection
+                .client_message_tx
+                .send(ClientMessage::PersonalStoreBuyItem {
+                    store_entity_id: store_client_entity.id,
+                    store_slot_index: slot_index,
+                    buy_item: item,
+                })
+                .ok();
+        }
+    }
+}
+
 pub fn ui_personal_store_system(
     mut egui_context: EguiContexts,
     mut ui_state: Local<UiPersonalStoreState>,
@@ -127,6 +191,7 @@ pub fn ui_personal_store_system(
     mut personal_store_events: EventReader<PersonalStoreEvent>,
     query_personal_store: Query<(&ClientEntity, &PersonalStore, &Position), With<PersonalStore>>,
     query_player: Query<&Position, With<PlayerCharacter>>,
+    query_player_inventory: Query<&Inventory, With<PlayerCharacter>>,
     query_player_tooltip: Query<PlayerTooltipQuery, With<PlayerCharacter>>,
     ui_resources: Res<UiResources>,
     dialog_assets: Res<Assets<Dialog>>,
@@ -179,21 +244,52 @@ pub fn ui_personal_store_system(
                 }
             }
             PersonalStoreEvent::BuyItem { slot_index, item } => {
-                if let Some((store_client_entity, _, _)) = ui_state
-                    .store_owner
-                    .and_then(|entity| query_personal_store.get(entity).ok())
-                {
-                    if let Some(game_connection) = &game_connection {
-                        game_connection
-                            .client_message_tx
-                            .send(ClientMessage::PersonalStoreBuyItem {
-                                store_entity_id: store_client_entity.id,
-                                store_slot_index: *slot_index,
-                                buy_item: item.clone(),
-                            })
-                            .ok();
-                    }
+                if let Ok(player_inventory) = query_player_inventory.get_single() {
+                    send_buy_request(
+                        ui_state,
+                        *slot_index,
+                        item.clone(),
+                        player_inventory,
+                        &game_connection,
+                        &query_personal_store,
+                        &mut message_box_events,
+                    );
                 }
+            }
+            PersonalStoreEvent::BuyItemBySlot { slot_index } => {
+                let Some((item, price)) = ui_state
+                    .store_sell_items
+                    .get(*slot_index)
+                    .and_then(|slot| slot.as_ref())
+                    .cloned()
+                else {
+                    continue;
+                };
+
+                let item_name = game_data
+                    .items
+                    .get_base_item(item.get_item_reference())
+                    .map(|x| x.name.to_string())
+                    .unwrap_or_else(|| String::from("Unknown Item"));
+                let quantity = item.get_quantity();
+                let slot_index = *slot_index;
+
+                message_box_events.send(MessageBoxEvent::Show {
+                    message: format!("Buy {} x{} for {} Zuly?", item_name, quantity, price.0),
+                    modal: true,
+                    ok: Some(Box::new(move |commands| {
+                        let item = item.clone();
+                        commands.add(move |world: &mut World| {
+                            if let Some(mut personal_store_events) =
+                                world.get_resource_mut::<Events<PersonalStoreEvent>>()
+                            {
+                                personal_store_events
+                                    .send(PersonalStoreEvent::BuyItem { slot_index, item });
+                            }
+                        });
+                    })),
+                    cancel: Some(Box::new(|_| {})),
+                });
             }
             PersonalStoreEvent::UpdateBuyList { entity, item_list } => {
                 if ui_state.store_owner == Some(*entity) {

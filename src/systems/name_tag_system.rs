@@ -5,8 +5,8 @@ use bevy::{
     ecs::query::WorldQuery,
     prelude::{
         Assets, BuildChildren, Changed, Color, Commands, ComputedVisibility, DespawnRecursiveExt,
-        Entity, EventReader, GlobalTransform, Handle, Image, Local, Query, Res, ResMut, Transform,
-        Vec2, Vec3, Visibility, With, Without,
+        Entity, EventReader, GlobalTransform, Handle, Image, Local, Or, Query, RemovedComponents,
+        Res, ResMut, Transform, Vec2, Vec3, Visibility, With, Without,
     },
     render::{
         render_resource::{Extent3d, TextureDimension, TextureFormat},
@@ -23,7 +23,8 @@ use rose_game_common::components::{Level, Npc, Team};
 use crate::{
     components::{
         ClientEntityName, ModelHeight, NameTag, NameTagEntity, NameTagHealthbarBackground,
-        NameTagHealthbarForeground, NameTagName, NameTagTargetMark, NameTagType, PlayerCharacter,
+        NameTagHealthbarForeground, NameTagName, NameTagTargetMark, NameTagType, PersonalStore,
+        PlayerCharacter,
     },
     events::LoadZoneEvent,
     render::WorldUiRect,
@@ -67,6 +68,7 @@ pub struct NameTagObjectQuery<'w> {
     name: &'w ClientEntityName,
     model_height: &'w ModelHeight,
     npc: Option<&'w Npc>,
+    personal_store: Option<&'w PersonalStore>,
     level: Option<&'w Level>,
     team: Option<&'w Team>,
 }
@@ -109,12 +111,19 @@ fn create_pending_nametag(
     player: Option<&PlayerQueryItem>,
     name_tag_type: NameTagType,
 ) -> NameTagPendingData {
+    let display_name = object
+        .personal_store
+        .map(|store| store.title.clone())
+        .unwrap_or_else(|| object.name.name.clone());
+
     let layout_job = match name_tag_type {
         NameTagType::Character => egui::epaint::text::LayoutJob::single_section(
-            object.name.name.clone(),
+            display_name,
             egui::TextFormat::simple(
                 egui::FontId::proportional(name_tag_settings.font_size[name_tag_type]),
-                if object.team.map_or(false, |team| {
+                if object.personal_store.is_some() {
+                    egui::Color32::YELLOW
+                } else if object.team.map_or(false, |team| {
                     Some(team.id) != player.map(|player| player.team.id)
                 }) {
                     egui::Color32::RED
@@ -124,7 +133,7 @@ fn create_pending_nametag(
             ),
         ),
         NameTagType::Monster => egui::epaint::text::LayoutJob::single_section(
-            object.name.name.clone(),
+            display_name,
             egui::TextFormat::simple(
                 egui::FontId::proportional(name_tag_settings.font_size[name_tag_type]),
                 get_monster_name_tag_color(
@@ -159,7 +168,7 @@ fn create_pending_nametag(
                 layout_job
             } else {
                 egui::epaint::text::LayoutJob::single_section(
-                    object.name.name.clone(),
+                    display_name,
                     egui::TextFormat::simple(
                         egui::FontId::proportional(name_tag_settings.font_size[name_tag_type]),
                         egui::Color32::GREEN,
@@ -386,7 +395,12 @@ pub fn name_tag_system(
     mut commands: Commands,
     mut name_tag_cache: Local<NameTagCache>,
     query_add: Query<NameTagObjectQuery, Without<NameTagEntity>>,
-    query_changed: Query<(Entity, Option<&NameTagEntity>), Changed<ClientEntityName>>,
+    query_changed: Query<
+        (Entity, Option<&NameTagEntity>),
+        Or<(Changed<ClientEntityName>, Changed<PersonalStore>)>,
+    >,
+    query_name_tag_entity: Query<&NameTagEntity>,
+    mut removed_personal_store: RemovedComponents<PersonalStore>,
     query_player: Query<PlayerQuery, With<PlayerCharacter>>,
     query_nametags: Query<(Entity, &NameTagEntity)>,
     query_window: Query<Entity, With<PrimaryWindow>>,
@@ -431,6 +445,16 @@ pub fn name_tag_system(
         name_tag_cache.pending.remove(&entity);
     }
 
+    // RemovedComponents<T> does not trigger Changed<T>, so explicitly invalidate any
+    // existing nametag when PersonalStore is removed (shop close).
+    for entity in removed_personal_store.iter() {
+        if let Ok(name_tag_entity) = query_name_tag_entity.get(entity) {
+            commands.entity(entity).remove::<NameTagEntity>();
+            commands.entity(name_tag_entity.0).despawn_recursive();
+        }
+        name_tag_cache.pending.remove(&entity);
+    }
+
     for object in query_add.iter() {
         let name_tag_type = if let Some(npc) = object.npc {
             if object
@@ -449,8 +473,11 @@ pub fn name_tag_system(
             NameTagType::Character
         };
 
-        let name_tag_data = if let Some(name_tag_data) = name_tag_cache.cache.get(&object.name.name)
-        {
+        let cache_key = object
+            .personal_store
+            .map(|store| store.title.as_str())
+            .unwrap_or(object.name.name.as_str());
+        let name_tag_data = if let Some(name_tag_data) = name_tag_cache.cache.get(cache_key) {
             name_tag_data
         } else if let Some(pending_name_tag_data) = name_tag_cache.pending.remove(&object.entity) {
             if let Some(name_tag_data) = create_nametag_data(
@@ -462,8 +489,8 @@ pub fn name_tag_system(
             ) {
                 name_tag_cache
                     .cache
-                    .insert(object.name.name.clone(), name_tag_data);
-                name_tag_cache.cache.get(&object.name.name).unwrap()
+                    .insert(cache_key.to_string(), name_tag_data);
+                name_tag_cache.cache.get(cache_key).unwrap()
             } else {
                 // Try again next frame
                 continue;
@@ -488,7 +515,7 @@ pub fn name_tag_system(
         let name_tag_entity = commands
             .spawn((
                 NameTag { name_tag_type },
-                if name_tag_settings.show_all[name_tag_type] {
+                if object.personal_store.is_some() || name_tag_settings.show_all[name_tag_type] {
                     Visibility::Inherited
                 } else {
                     Visibility::Hidden

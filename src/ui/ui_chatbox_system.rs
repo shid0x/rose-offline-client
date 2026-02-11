@@ -1,4 +1,4 @@
-use bevy::prelude::{Assets, EventReader, EventWriter, Local, Res};
+use bevy::prelude::{Assets, EventReader, EventWriter, Local, Res, ResMut};
 use bevy_egui::{egui, EguiContexts};
 
 use rose_game_common::messages::client::ClientMessage;
@@ -8,7 +8,7 @@ use crate::{
     resources::{GameConnection, UiResources},
     ui::{
         widgets::{DataBindings, Dialog},
-        UiSoundEvent,
+        UiSoundEvent, UiStateWindows,
     },
 };
 
@@ -80,6 +80,7 @@ pub fn ui_chatbox_system(
     mut ui_state_chatbox: Local<UiStateChatbox>,
     mut chatbox_events: EventReader<ChatboxEvent>,
     game_connection: Option<Res<GameConnection>>,
+    mut ui_state_windows: ResMut<UiStateWindows>,
     ui_resources: Res<UiResources>,
     mut ui_sound_events: EventWriter<UiSoundEvent>,
     dialog_assets: Res<Assets<Dialog>>,
@@ -295,6 +296,13 @@ pub fn ui_chatbox_system(
         {
             if response.lost_focus() {
                 if !ui_state_chatbox.textbox_text.is_empty() {
+                    let text = ui_state_chatbox.textbox_text.trim();
+                    if text.eq_ignore_ascii_case("/pshop") {
+                        ui_state_windows.player_shop_open = !ui_state_windows.player_shop_open;
+                        ui_state_chatbox.textbox_text.clear();
+                        return;
+                    }
+
                     // TODO: Parse text line to decide whether its chat, shout, etc
                     if let Some(game_connection) = game_connection.as_ref() {
                         game_connection

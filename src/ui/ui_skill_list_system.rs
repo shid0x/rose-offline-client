@@ -362,8 +362,10 @@ pub fn ui_skill_list_system(
             // DLGSKILL widget coordinates are dialog-local. Convert to screen-space by using
             // the actual content area origin of this egui window.
             let dialog_screen_origin = ui.max_rect().min;
-            let dialog_content_rect =
-                egui::Rect::from_min_size(dialog_screen_origin, egui::vec2(dialog.width, dialog.height));
+            let dialog_content_rect = egui::Rect::from_min_size(
+                dialog_screen_origin,
+                egui::vec2(dialog.width, dialog.height),
+            );
             if DEBUG_SKILL_UP_RECT_OVERLAY {
                 debug_content_rect = Some(dialog_content_rect);
             }
@@ -539,33 +541,43 @@ pub fn ui_skill_list_system(
                             let can_level_up = can_level_up_result.is_ok();
                             let disabled_reason = can_level_up_result.err();
 
-                            let (row_x, row_y, _row_width, _row_height, row_step, plus_offset_x, plus_offset_y, plus_w, plus_h) =
-                                if let Some(layout) = skill_up_layout.as_ref() {
-                                    (
-                                        layout.row_x,
-                                        layout.row_y,
-                                        layout.row_width,
-                                        layout.row_height,
-                                        layout.row_step,
-                                        layout.plus_offset_x,
-                                        layout.plus_offset_y,
-                                        layout.plus_width,
-                                        layout.plus_height,
-                                    )
-                                } else {
-                                    (
-                                        0.0,
-                                        listbox_pos.y,
-                                        223.0,
-                                        45.0,
-                                        44.0,
-                                        SKILL_ROW_PLUS_OFFSET_X,
-                                        SKILL_ROW_PLUS_OFFSET_Y,
-                                        16.0,
-                                        16.0,
-                                    )
-                                };
-                            let row_min = dialog_screen_origin + egui::vec2(row_x, row_y + i as f32 * row_step);
+                            let (
+                                row_x,
+                                row_y,
+                                _row_width,
+                                _row_height,
+                                row_step,
+                                plus_offset_x,
+                                plus_offset_y,
+                                plus_w,
+                                plus_h,
+                            ) = if let Some(layout) = skill_up_layout.as_ref() {
+                                (
+                                    layout.row_x,
+                                    layout.row_y,
+                                    layout.row_width,
+                                    layout.row_height,
+                                    layout.row_step,
+                                    layout.plus_offset_x,
+                                    layout.plus_offset_y,
+                                    layout.plus_width,
+                                    layout.plus_height,
+                                )
+                            } else {
+                                (
+                                    0.0,
+                                    listbox_pos.y,
+                                    223.0,
+                                    45.0,
+                                    44.0,
+                                    SKILL_ROW_PLUS_OFFSET_X,
+                                    SKILL_ROW_PLUS_OFFSET_Y,
+                                    16.0,
+                                    16.0,
+                                )
+                            };
+                            let row_min = dialog_screen_origin
+                                + egui::vec2(row_x, row_y + i as f32 * row_step);
                             let plus_base_rect = egui::Rect::from_min_size(
                                 row_min + egui::vec2(plus_offset_x, plus_offset_y),
                                 egui::vec2(plus_w, plus_h),
@@ -598,9 +610,7 @@ pub fn ui_skill_list_system(
                                         .or(plus_over_sprite.as_ref())
                                         .or(plus_normal_sprite.as_ref())
                                 } else if response_upgrade_button.hovered() {
-                                    plus_over_sprite
-                                        .as_ref()
-                                        .or(plus_normal_sprite.as_ref())
+                                    plus_over_sprite.as_ref().or(plus_normal_sprite.as_ref())
                                 } else {
                                     plus_normal_sprite.as_ref()
                                 }
@@ -619,7 +629,8 @@ pub fn ui_skill_list_system(
                             }
 
                             if can_level_up {
-                                response_upgrade_button = response_upgrade_button.on_hover_text("Up");
+                                response_upgrade_button =
+                                    response_upgrade_button.on_hover_text("Up");
                             } else if let Some(reason) = disabled_reason {
                                 response_upgrade_button =
                                     response_upgrade_button.on_hover_text(reason);

@@ -5,7 +5,7 @@
 -You can now learn upgrade your skill learning ( the button for leveling up skill is hardcodded due to some DDS padding )
 -/mon ID vs MON
 -Pressing F9 in game now brings up and item browser so you can get them easily 
-
+-Shop system operational 
 
 
 # rose-offline-client

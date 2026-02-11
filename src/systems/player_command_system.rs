@@ -3,7 +3,7 @@ use std::time::Duration;
 use bevy::{
     ecs::query::WorldQuery,
     math::Vec3Swizzles,
-    prelude::{Entity, EventReader, EventWriter, Query, Res, With},
+    prelude::{Entity, EventReader, EventWriter, Query, Res, ResMut, With},
 };
 
 use rose_data::{
@@ -22,6 +22,7 @@ use crate::{
     },
     events::{ChatboxEvent, PlayerCommandEvent},
     resources::{GameConnection, GameData, SelectedTarget},
+    ui::UiStateWindows,
 };
 
 #[derive(WorldQuery)]
@@ -61,6 +62,7 @@ pub fn player_command_system(
     query_team: Query<(&ClientEntity, &Team)>,
     query_skill_target: Query<SkillTargetQuery>,
     mut chatbox_events: EventWriter<ChatboxEvent>,
+    mut ui_state_windows: ResMut<UiStateWindows>,
     game_connection: Option<Res<GameConnection>>,
     game_data: Res<GameData>,
     selected_target: Res<SelectedTarget>,
@@ -238,11 +240,15 @@ pub fn player_command_system(
                                         .ok();
                                 }
                             }
+                            Some(SkillBasicCommand::PrivateStore) => {
+                                // Use the same UI path as /pshop chat command.
+                                ui_state_windows.player_shop_open =
+                                    !ui_state_windows.player_shop_open;
+                            }
                             /*
                             Some(SkillBasicCommand::AutoTarget) => {}
                             Some(SkillBasicCommand::AddFriend) => {}
                             Some(SkillBasicCommand::Trade) => {}
-                            Some(SkillBasicCommand::PrivateStore) => {}
                             Some(SkillBasicCommand::SelfTarget) => {}
                             Some(SkillBasicCommand::VehiclePassengerInvite) => {}
                             */
