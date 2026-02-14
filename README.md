@@ -1,11 +1,22 @@
-#Add ons on this version : 
+Changes compared to original exjam version :<br>
+<br>
+Content : <br>
+-Skill leveling system implemented<br> 
+-Shop system implemented <br>
 
--2047 damage limit was removed<br>
--Cliking on the exit button on the UI will exit the game correctly<br> 
--You can now learn upgrade your skill learning ( the button for leveling up skill is hardcodded due to some DDS padding )<br>
--/mon ID vs MON<br>
--Pressing F9 in game now brings up and item browser so you can get them easily<br>
--Shop system operational<br>
+Extra features : <br>
+-2047 damage limit was removed <br>
+-/mon ID vs MON <br>
+-Pressing F9 in game now brings up and item browser so you can get them easily <br> 
+
+Bug fixes :  <br>
+-Cliking on the exit button on the UI will exit the game correctly  <br>
+-Drap and drop buying operational  <br>
+-Player getting out of combat when using a skill and being out of MPs  <br>
+-Player missing after using a skill  <br>
+-name plate not following the player height when in a cart or a castle gear <br>
+
+
 
 
 # rose-offline-client

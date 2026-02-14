@@ -83,7 +83,8 @@ use systems::{
     item_drop_model_system, login_connection_system, login_event_system, login_state_enter_system,
     login_state_exit_system, login_system, model_viewer_enter_system, model_viewer_exit_system,
     model_viewer_system, move_destination_effect_system, name_tag_system,
-    name_tag_update_color_system, name_tag_update_healthbar_system, name_tag_visibility_system,
+    name_tag_update_color_system, name_tag_update_healthbar_system, name_tag_vehicle_height_system,
+    name_tag_visibility_system,
     network_thread_system, npc_idle_sound_system, npc_model_add_collider_system,
     npc_model_update_system, orbit_camera_system, particle_sequence_system,
     passive_recovery_system, pending_damage_system, pending_skill_effect_system,
@@ -745,6 +746,14 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
         PostUpdate,
         (vehicle_model_system, vehicle_sound_system)
             .chain()
+            .in_set(GameStages::AfterUpdate),
+    );
+
+    // Update name tag height when entering/exiting a vehicle (e.g. castle gear)
+    app.add_systems(
+        PostUpdate,
+        name_tag_vehicle_height_system
+            .after(vehicle_model_system)
             .in_set(GameStages::AfterUpdate),
     );
 

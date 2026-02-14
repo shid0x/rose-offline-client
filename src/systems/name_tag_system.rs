@@ -4,9 +4,9 @@ use arrayvec::ArrayVec;
 use bevy::{
     ecs::query::WorldQuery,
     prelude::{
-        Assets, BuildChildren, Changed, Color, Commands, ComputedVisibility, DespawnRecursiveExt,
-        Entity, EventReader, GlobalTransform, Handle, Image, Local, Or, Query, RemovedComponents,
-        Res, ResMut, Transform, Vec2, Vec3, Visibility, With, Without,
+        Assets, BuildChildren, Changed, Color, Commands, ComputedVisibility,
+        DespawnRecursiveExt, Entity, EventReader, GlobalTransform, Handle, Image, Local, Or,
+        Query, RemovedComponents, Res, ResMut, Transform, Vec2, Vec3, Visibility, With, Without,
     },
     render::{
         render_resource::{Extent3d, TextureDimension, TextureFormat},

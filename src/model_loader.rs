@@ -82,6 +82,8 @@ pub struct ModelLoader {
     // Vehicle
     skeleton_cart: ZmdFile,
     skeleton_castle_gear: ZmdFile,
+    cart_driver_seat_height: f32,
+    castle_gear_driver_seat_height: f32,
     vehicle: ZscFile,
 
     // Npc
@@ -103,6 +105,13 @@ impl ModelLoader {
         trail_effect_image: Handle<Image>,
         specular_image: Handle<Image>,
     ) -> Result<ModelLoader, anyhow::Error> {
+        // Pre-load vehicle skeletons and compute their heights
+        let skeleton_cart = vfs.read_file::<ZmdFile, _>("3DDATA/PAT/CART/CART01.ZMD")?;
+        let skeleton_castle_gear = vfs
+            .read_file::<ZmdFile, _>("3DDATA/PAT/CASTLEGEAR/CASTLEGEAR02/CASTLEGEAR02.ZMD")?;
+        let cart_driver_seat_height = compute_driver_seat_height(&skeleton_cart);
+        let castle_gear_driver_seat_height = compute_driver_seat_height(&skeleton_castle_gear);
+
         Ok(ModelLoader {
             // Male
             skeleton_male: vfs.read_file::<ZmdFile, _>("3DDATA/AVATAR/MALE.ZMD")?,
@@ -129,9 +138,10 @@ impl ModelLoader {
             sub_weapon: vfs.read_file::<ZscFile, _>("3DDATA/WEAPON/LIST_SUBWPN.ZSC")?,
 
             // Vehicle
-            skeleton_cart: vfs.read_file::<ZmdFile, _>("3DDATA/PAT/CART/CART01.ZMD")?,
-            skeleton_castle_gear: vfs
-                .read_file::<ZmdFile, _>("3DDATA/PAT/CASTLEGEAR/CASTLEGEAR02/CASTLEGEAR02.ZMD")?,
+            skeleton_cart,
+            skeleton_castle_gear,
+            cart_driver_seat_height,
+            castle_gear_driver_seat_height,
             vehicle: vfs.read_file::<ZscFile, _>("3DDATA/PAT/LIST_PAT.ZSC")?,
 
             // NPC
@@ -912,6 +922,22 @@ impl ModelLoader {
         }
     }
 
+    pub fn get_vehicle_driver_seat_height(&self, equipment: &Equipment) -> f32 {
+        let vehicle_type = equipment.equipped_vehicle[VehiclePartIndex::Body]
+            .as_ref()
+            .and_then(|equipment_item| {
+                self.item_database
+                    .get_vehicle_item(equipment_item.item.item_number)
+            })
+            .map(|item_data| item_data.vehicle_type)
+            .unwrap_or(VehicleType::Cart);
+
+        match vehicle_type {
+            VehicleType::Cart => self.cart_driver_seat_height,
+            VehicleType::CastleGear => self.castle_gear_driver_seat_height,
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn spawn_vehicle_model(
         &self,
@@ -1092,6 +1118,43 @@ impl From<ItemType> for CharacterModelPart {
             _ => panic!("Invalid ItemType for CharacterModelPart"),
         }
     }
+}
+
+/// Compute the world-space Y position of the first dummy bone (driver seat)
+/// in a vehicle skeleton. This represents how high the character sits when driving.
+fn compute_driver_seat_height(skeleton: &ZmdFile) -> f32 {
+    if skeleton.dummy_bones.is_empty() {
+        return 0.0;
+    }
+
+    let mut bind_pose: Vec<Transform> = skeleton
+        .bones
+        .iter()
+        .chain(skeleton.dummy_bones.iter())
+        .map(|bone| {
+            let position = Vec3::new(bone.position.x, bone.position.z, -bone.position.y) / 100.0;
+            let rotation = Quat::from_xyzw(
+                bone.rotation.x,
+                bone.rotation.z,
+                -bone.rotation.y,
+                bone.rotation.w,
+            );
+            Transform::default()
+                .with_translation(position)
+                .with_rotation(rotation)
+        })
+        .collect();
+
+    let dummy_bone_offset = skeleton.bones.len();
+
+    // Compute world-space transforms for all bones
+    transform_children(skeleton, &mut bind_pose, 0);
+
+    // Compute world-space transform for the first dummy bone (driver seat)
+    // Match the same multiplication order as spawn_skeleton: dummy_local * parent_world
+    let driver_seat_world = bind_pose[dummy_bone_offset] * bind_pose[skeleton.dummy_bones[0].parent as usize];
+
+    driver_seat_world.translation.y.max(0.0)
 }
 
 fn transform_children(skeleton: &ZmdFile, bone_transforms: &mut Vec<Transform>, bone_index: usize) {

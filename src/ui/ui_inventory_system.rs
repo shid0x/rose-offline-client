@@ -648,27 +648,32 @@ pub fn ui_inventory_system(
                         ui.end_row();
                     }
 
-                    // Allow dropping a personal shop item anywhere on the inventory panel.
+                    // Allow dropping a personal shop item anywhere on the inventory panel
+                    // without consuming pointer input needed by inventory hover/drag logic.
                     let panel_rect = egui::Rect::from_min_size(
                         ui.min_rect().min + egui::vec2(12.0, y_start),
                         egui::vec2(5.0 * 41.0, 6.0 * 41.0),
                     );
-                    let panel_response =
-                        ui.allocate_rect(panel_rect, egui::Sense::click_and_drag());
-                    if panel_response.hovered() {
-                        ui.ctx().input(|input| {
-                            if input.pointer.any_released()
-                                && !input.pointer.button_down(egui::PointerButton::Primary)
+                    ui.ctx().input(|input| {
+                        let pointer_over_panel = input
+                            .pointer
+                            .hover_pos()
+                            .map_or(false, |pointer_pos| panel_rect.contains(pointer_pos));
+
+                        if pointer_over_panel
+                            && input.pointer.any_released()
+                            && !input.pointer.button_down(egui::PointerButton::Primary)
+                        {
+                            if let Some(DragAndDropId::PersonalStoreSell(slot_index)) =
+                                ui_state_dnd.dragged_item.as_ref()
                             {
-                                if let Some(DragAndDropId::PersonalStoreSell(slot_index)) =
-                                    ui_state_dnd.dragged_item.take()
-                                {
-                                    personal_store_events
-                                        .send(PersonalStoreEvent::BuyItemBySlot { slot_index });
-                                }
+                                personal_store_events.send(PersonalStoreEvent::BuyItemBySlot {
+                                    slot_index: *slot_index,
+                                });
+                                ui_state_dnd.dragged_item = None;
                             }
-                        });
-                    }
+                        }
+                    });
 
                     ui.allocate_ui_at_rect(
                         ui.min_rect().translate(egui::vec2(
