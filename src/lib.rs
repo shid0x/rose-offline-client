@@ -64,8 +64,9 @@ use render::{DamageDigitMaterial, RoseRenderPlugin};
 use resources::{
     load_ui_resources, run_network_thread, ui_requested_cursor_apply_system, update_ui_resources,
     AppState, ClientEntityList, DamageDigitsSpawner, DebugRenderConfig, GameData, NameTagSettings,
-    NetworkThread, NetworkThreadMessage, RenderConfiguration, SelectedTarget, ServerConfiguration,
-    SoundCache, SoundSettings, SpecularTexture, VfsResource, WorldTime, ZoneTime,
+    NetworkThread, NetworkThreadMessage, PendingClanInvites, RenderConfiguration, SelectedTarget,
+    ServerConfiguration, SoundCache, SoundSettings, SpecularTexture, VfsResource, WorldTime,
+    ZoneTime,
 };
 use scripting::RoseScriptingPlugin;
 use systems::{
@@ -98,7 +99,7 @@ use systems::{
 use ui::{
     load_dialog_sprites_system, ui_bank_system, ui_character_create_system,
     ui_character_info_system, ui_character_select_name_tag_system, ui_character_select_system,
-    ui_chatbox_system, ui_clan_system, ui_create_clan_system, ui_debug_camera_info_system,
+    ui_chatbox_system, ui_clan_invite_system, ui_clan_system, ui_create_clan_system, ui_debug_camera_info_system,
     ui_debug_client_entity_list_system, ui_debug_command_viewer_system,
     ui_debug_diagnostics_system, ui_debug_dialog_list_system, ui_debug_effect_list_system,
     ui_debug_entity_inspector_system, ui_debug_item_list_system, ui_debug_menu_system,
@@ -296,10 +297,7 @@ pub struct GraphicsConfig {
 impl Default for GraphicsConfig {
     fn default() -> Self {
         Self {
-            mode: GraphicsModeConfig::Window {
-                width: 1920.0,
-                height: 1080.0,
-            },
+            mode: GraphicsModeConfig::Fullscreen,
             passthrough_terrain_textures: false,
             trail_effect_duration_multiplier: 1.0,
             disable_vsync: false,
@@ -472,7 +470,7 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
     .insert_resource(AssetServer::new(VfsAssetIo::new(virtual_filesystem)));
 
     // Initialise bevy engine
-    app.insert_resource(Msaa::Off)
+    app.insert_resource(Msaa::Sample4)
         .insert_resource(ClearColor(Color::rgb(0.70, 0.90, 1.0)))
         .insert_resource(bevy::gizmos::GizmoConfig {
             depth_bias: -0.1,
@@ -856,7 +854,8 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
         .init_resource::<WorldTime>()
         .init_resource::<ZoneTime>()
         .init_resource::<SelectedTarget>()
-        .init_resource::<NameTagSettings>();
+        .init_resource::<NameTagSettings>()
+        .init_resource::<PendingClanInvites>();
 
     app.add_systems(OnEnter(AppState::Game), game_state_enter_system);
 
@@ -903,18 +902,21 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
                 ui_hotbar_system,
                 ui_minimap_system,
                 ui_npc_store_system,
+            ),
+            (
+                ui_clan_invite_system,
                 ui_party_system,
                 ui_party_option_system,
                 ui_personal_store_system,
                 ui_player_info_system,
-            ),
-            (
                 ui_quest_list_system,
                 ui_respawn_system,
                 ui_selected_target_system,
                 ui_skill_list_system,
                 ui_skill_tree_system,
                 ui_settings_system,
+            ),
+            (
                 ui_status_effects_system,
                 conversation_dialog_system,
             ),

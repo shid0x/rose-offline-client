@@ -1049,6 +1049,7 @@ impl GameClient {
                         level,
                         points,
                         money,
+                        description,
                         skills,
                     } => {
                         self.server_message_tx
@@ -1058,6 +1059,7 @@ impl GameClient {
                                 level,
                                 points,
                                 money,
+                                description,
                                 skills,
                             })
                             .ok();
@@ -1099,6 +1101,55 @@ impl GameClient {
                     PacketServerClanCommand::ClanMemberList { members } => {
                         self.server_message_tx
                             .send(ServerMessage::ClanMemberList { members })
+                            .ok();
+                    }
+                    PacketServerClanCommand::ClanInvited {
+                        name,
+                        clan_unique_id,
+                        clan_mark,
+                        clan_level,
+                        clan_name,
+                        inviter_entity_id,
+                    } => {
+                        self.server_message_tx
+                            .send(ServerMessage::ClanInvited {
+                                name,
+                                clan_unique_id,
+                                clan_mark,
+                                clan_level,
+                                clan_name,
+                                inviter_entity_id,
+                            })
+                            .ok();
+                    }
+                    PacketServerClanCommand::ClanInviteResult { response } => {
+                        self.server_message_tx
+                            .send(ServerMessage::ClanInviteResult { response })
+                            .ok();
+                    }
+                    PacketServerClanCommand::ClanMemberJoined { name } => {
+                        self.server_message_tx
+                            .send(ServerMessage::ClanMemberJoined { name })
+                            .ok();
+                    }
+                    PacketServerClanCommand::ClanMemberLeft { name } => {
+                        self.server_message_tx
+                            .send(ServerMessage::ClanMemberLeft { name })
+                            .ok();
+                    }
+                    PacketServerClanCommand::ClanMemberKicked { name } => {
+                        self.server_message_tx
+                            .send(ServerMessage::ClanMemberKicked { name })
+                            .ok();
+                    }
+                    PacketServerClanCommand::ClanKicked => {
+                        self.server_message_tx
+                            .send(ServerMessage::ClanKicked)
+                            .ok();
+                    }
+                    PacketServerClanCommand::ClanDisbanded => {
+                        self.server_message_tx
+                            .send(ServerMessage::ClanDisbanded)
                             .ok();
                     }
                 }
@@ -1497,6 +1548,57 @@ impl GameClient {
                         description,
                         mark,
                     }))
+                    .await?;
+            }
+            ClientMessage::ClanInvite { name } => {
+                connection
+                    .write_packet(Packet::from(&PacketClientClanCommand::Invite { name }))
+                    .await?;
+            }
+            ClientMessage::ClanSetDescription { description } => {
+                connection
+                    .write_packet(Packet::from(&PacketClientClanCommand::SetDescription {
+                        description,
+                    }))
+                    .await?;
+            }
+            ClientMessage::ClanAcceptInvite { inviter_name } => {
+                connection
+                    .write_packet(Packet::from(&PacketClientClanCommand::AcceptInvite {
+                        inviter_name,
+                    }))
+                    .await?;
+            }
+            ClientMessage::ClanRejectInvite { inviter_name } => {
+                connection
+                    .write_packet(Packet::from(&PacketClientClanCommand::RejectInvite {
+                        inviter_name,
+                    }))
+                    .await?;
+            }
+            ClientMessage::ClanKick { name } => {
+                connection
+                    .write_packet(Packet::from(&PacketClientClanCommand::Kick { name }))
+                    .await?;
+            }
+            ClientMessage::ClanPromote { name } => {
+                connection
+                    .write_packet(Packet::from(&PacketClientClanCommand::Promote { name }))
+                    .await?;
+            }
+            ClientMessage::ClanDemote { name } => {
+                connection
+                    .write_packet(Packet::from(&PacketClientClanCommand::Demote { name }))
+                    .await?;
+            }
+            ClientMessage::ClanLeave => {
+                connection
+                    .write_packet(Packet::from(&PacketClientClanCommand::Leave))
+                    .await?;
+            }
+            ClientMessage::ClanDisband => {
+                connection
+                    .write_packet(Packet::from(&PacketClientClanCommand::Disband))
                     .await?;
             }
             ClientMessage::CraftInsertGem {

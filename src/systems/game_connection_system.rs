@@ -20,6 +20,7 @@ use rose_game_common::{
         StatusEffects, StatusEffectsRegen,
     },
     messages::{
+        client::ClientMessage,
         server::{
             ClanCreateError, LearnSkillError, LevelUpSkillError, PartyMemberInfo,
             PartyMemberInfoOffline, PersonalStoreTransactionStatus, PickupItemDropError,
@@ -40,10 +41,14 @@ use crate::{
         PendingSkillTargetList, PersonalStore, PlayerCharacter, Position, VisibleStatusEffects,
     },
     events::{
-        BankEvent, ChatboxEvent, ClientEntityEvent, GameConnectionEvent, LoadZoneEvent,
-        MessageBoxEvent, PartyEvent, PersonalStoreEvent, QuestTriggerEvent, UseItemEvent,
+        BankEvent, ChatboxEvent, ClientEntityEvent, GameConnectionEvent,
+        LoadZoneEvent, MessageBoxEvent, PartyEvent, PersonalStoreEvent, QuestTriggerEvent,
+        UseItemEvent,
     },
-    resources::{AppState, ClientEntityList, GameConnection, GameData, WorldRates, WorldTime},
+    resources::{
+        AppState, ClientEntityList, GameConnection, GameData, PendingClanInvites, WorldConnection,
+        WorldRates, WorldTime,
+    },
 };
 
 fn to_next_command(
@@ -121,6 +126,24 @@ fn update_inventory_and_money(
     }
 }
 
+fn clear_visible_character_clan_membership_by_name(world: &mut World, name: &str) {
+    let mut query = world.query::<(Entity, &ClientEntity, &ClientEntityName)>();
+    let entities_to_clear = query
+        .iter(world)
+        .filter_map(|(entity, client_entity, client_entity_name)| {
+            (client_entity.entity_type == ClientEntityType::Character
+                && client_entity_name.name == name)
+                .then_some(entity)
+        })
+        .collect::<Vec<_>>();
+
+    for entity in entities_to_clear {
+        if let Some(mut entity_mut) = world.get_entity_mut(entity) {
+            entity_mut.remove::<ClanMembership>();
+        }
+    }
+}
+
 pub fn game_connection_system(
     mut commands: Commands,
     game_connection: Option<Res<GameConnection>>,
@@ -137,6 +160,10 @@ pub fn game_connection_system(
     mut personal_store_events: EventWriter<PersonalStoreEvent>,
     mut quest_trigger_events: EventWriter<QuestTriggerEvent>,
     mut message_box_events: EventWriter<MessageBoxEvent>,
+    (world_connection, mut pending_clan_invites): (
+        Option<Res<WorldConnection>>,
+        ResMut<PendingClanInvites>,
+    ),
 ) {
     let Some(game_connection) = game_connection else {
         return;
@@ -2233,7 +2260,15 @@ pub fn game_connection_system(
                         }));
                 }
             }
-            Ok(ServerMessage::ClanUpdateInfo { id, mark, level, points, money, skills }) => {
+            Ok(ServerMessage::ClanUpdateInfo {
+                id,
+                mark,
+                level,
+                points,
+                money,
+                description,
+                skills,
+            }) => {
                 if let Some(player_entity) = client_entity_list.player_entity {
                     commands.add(move |world: &mut World| {
                         let mut entity_mut = world.entity_mut(player_entity);
@@ -2243,6 +2278,7 @@ pub fn game_connection_system(
                             clan.level = level;
                             clan.points = points;
                             clan.money = money;
+                            clan.description = description;
                             clan.skills = skills;
                         }
                     });
@@ -2319,6 +2355,73 @@ pub fn game_connection_system(
                                 });
                             }
                         }
+                    });
+                }
+            }
+            Ok(ServerMessage::ClanInvited { name, clan_unique_id, clan_mark: _, clan_level, clan_name, inviter_entity_id: _ }) => {
+                pending_clan_invites.invites.push(crate::resources::PendingClanInvite {
+                    inviter_name: name,
+                    clan_name,
+                    clan_unique_id,
+                    clan_level,
+                });
+            }
+            Ok(ServerMessage::ClanInviteResult { response }) => {
+                log::info!("Received clan invite result: {:?}", response);
+                // TODO: Show invite result message to user
+            }
+            Ok(ServerMessage::ClanMemberJoined { name }) => {
+                log::info!("Clan member joined: {}", name);
+                if let Some(world_connection) = world_connection.as_ref() {
+                    world_connection
+                        .client_message_tx
+                        .send(ClientMessage::ClanGetMemberList)
+                        .ok();
+                }
+            }
+            Ok(ServerMessage::ClanMemberLeft { name }) => {
+                log::info!("Clan member left: {}", name);
+                if let Some(player_entity) = client_entity_list.player_entity {
+                    commands.add(move |world: &mut World| {
+                        let mut entity_mut = world.entity_mut(player_entity);
+                        if let Some(mut clan) = entity_mut.get_mut::<Clan>() {
+                            clan.members.retain(|member| member.name != name);
+                        }
+
+                        clear_visible_character_clan_membership_by_name(world, &name);
+                    });
+                }
+            }
+            Ok(ServerMessage::ClanMemberKicked { name }) => {
+                log::info!("Clan member kicked: {}", name);
+                if let Some(player_entity) = client_entity_list.player_entity {
+                    commands.add(move |world: &mut World| {
+                        let mut entity_mut = world.entity_mut(player_entity);
+                        if let Some(mut clan) = entity_mut.get_mut::<Clan>() {
+                            clan.members.retain(|member| member.name != name);
+                        }
+
+                        clear_visible_character_clan_membership_by_name(world, &name);
+                    });
+                }
+            }
+            Ok(ServerMessage::ClanKicked) => {
+                log::info!("You have been kicked from the clan");
+                if let Some(player_entity) = client_entity_list.player_entity {
+                    commands.add(move |world: &mut World| {
+                        let mut entity_mut = world.entity_mut(player_entity);
+                        entity_mut.remove::<Clan>();
+                        entity_mut.remove::<ClanMembership>();
+                    });
+                }
+            }
+            Ok(ServerMessage::ClanDisbanded) => {
+                log::info!("Your clan has been disbanded");
+                if let Some(player_entity) = client_entity_list.player_entity {
+                    commands.add(move |world: &mut World| {
+                        let mut entity_mut = world.entity_mut(player_entity);
+                        entity_mut.remove::<Clan>();
+                        entity_mut.remove::<ClanMembership>();
                     });
                 }
             }

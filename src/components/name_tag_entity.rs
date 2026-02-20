@@ -4,7 +4,7 @@ use bevy::{
 };
 use enum_map::Enum;
 
-#[derive(Copy, Clone, Enum)]
+#[derive(Copy, Clone, PartialEq, Eq, Enum)]
 pub enum NameTagType {
     Character,
     Monster,
@@ -18,6 +18,9 @@ pub struct NameTag {
 
 #[derive(Component)]
 pub struct NameTagName;
+
+#[derive(Component)]
+pub struct NameTagClanName;
 
 #[derive(Component)]
 pub struct NameTagTargetMark;

@@ -22,9 +22,9 @@ use rose_game_common::components::{Level, Npc, Team};
 
 use crate::{
     components::{
-        ClientEntityName, ModelHeight, NameTag, NameTagEntity, NameTagHealthbarBackground,
-        NameTagHealthbarForeground, NameTagName, NameTagTargetMark, NameTagType, PersonalStore,
-        PlayerCharacter,
+        ClanMembership, ClientEntityName, ModelHeight, NameTag, NameTagClanName, NameTagEntity,
+        NameTagHealthbarBackground, NameTagHealthbarForeground, NameTagName, NameTagTargetMark,
+        NameTagType, PersonalStore, PlayerCharacter,
     },
     events::LoadZoneEvent,
     render::WorldUiRect,
@@ -71,6 +71,7 @@ pub struct NameTagObjectQuery<'w> {
     personal_store: Option<&'w PersonalStore>,
     level: Option<&'w Level>,
     team: Option<&'w Team>,
+    clan_membership: Option<&'w ClanMembership>,
 }
 
 pub fn get_monster_name_tag_color(
@@ -117,21 +118,57 @@ fn create_pending_nametag(
         .unwrap_or_else(|| object.name.name.clone());
 
     let layout_job = match name_tag_type {
-        NameTagType::Character => egui::epaint::text::LayoutJob::single_section(
-            display_name,
-            egui::TextFormat::simple(
-                egui::FontId::proportional(name_tag_settings.font_size[name_tag_type]),
-                if object.personal_store.is_some() {
-                    egui::Color32::YELLOW
-                } else if object.team.map_or(false, |team| {
-                    Some(team.id) != player.map(|player| player.team.id)
-                }) {
-                    egui::Color32::RED
+        NameTagType::Character => {
+            let name_color = if object.personal_store.is_some() {
+                egui::Color32::YELLOW
+            } else if object.team.map_or(false, |team| {
+                Some(team.id) != player.map(|player| player.team.id)
+            }) {
+                egui::Color32::RED
+            } else {
+                egui::Color32::WHITE
+            };
+
+            // Build layout with clan name above player name (same pattern as NPC two-line tags)
+            if let Some(clan_membership) = &object.clan_membership {
+                if !clan_membership.name.is_empty() {
+                    let mut clan_text = clan_membership.name.clone();
+                    clan_text.push('\n');
+                    let mut layout_job = egui::epaint::text::LayoutJob::single_section(
+                        clan_text,
+                        egui::TextFormat::simple(
+                            egui::FontId::proportional(name_tag_settings.font_size[name_tag_type]),
+                            egui::Color32::from_rgb(100, 180, 255),
+                        ),
+                    );
+                    layout_job.append(
+                        &display_name,
+                        0.0,
+                        egui::TextFormat::simple(
+                            egui::FontId::proportional(name_tag_settings.font_size[name_tag_type]),
+                            name_color,
+                        ),
+                    );
+                    layout_job
                 } else {
-                    egui::Color32::WHITE
-                },
-            ),
-        ),
+                    egui::epaint::text::LayoutJob::single_section(
+                        display_name,
+                        egui::TextFormat::simple(
+                            egui::FontId::proportional(name_tag_settings.font_size[name_tag_type]),
+                            name_color,
+                        ),
+                    )
+                }
+            } else {
+                egui::epaint::text::LayoutJob::single_section(
+                    display_name,
+                    egui::TextFormat::simple(
+                        egui::FontId::proportional(name_tag_settings.font_size[name_tag_type]),
+                        name_color,
+                    ),
+                )
+            }
+        }
         NameTagType::Monster => egui::epaint::text::LayoutJob::single_section(
             display_name,
             egui::TextFormat::simple(
@@ -397,10 +434,10 @@ pub fn name_tag_system(
     query_add: Query<NameTagObjectQuery, Without<NameTagEntity>>,
     query_changed: Query<
         (Entity, Option<&NameTagEntity>),
-        Or<(Changed<ClientEntityName>, Changed<PersonalStore>)>,
+        Or<(Changed<ClientEntityName>, Changed<PersonalStore>, Changed<ClanMembership>)>,
     >,
-    query_name_tag_entity: Query<&NameTagEntity>,
     mut removed_personal_store: RemovedComponents<PersonalStore>,
+    mut removed_clan_membership: RemovedComponents<ClanMembership>,
     query_player: Query<PlayerQuery, With<PlayerCharacter>>,
     query_nametags: Query<(Entity, &NameTagEntity)>,
     query_window: Query<Entity, With<PrimaryWindow>>,
@@ -448,7 +485,16 @@ pub fn name_tag_system(
     // RemovedComponents<T> does not trigger Changed<T>, so explicitly invalidate any
     // existing nametag when PersonalStore is removed (shop close).
     for entity in removed_personal_store.iter() {
-        if let Ok(name_tag_entity) = query_name_tag_entity.get(entity) {
+        if let Ok((_, name_tag_entity)) = query_nametags.get(entity) {
+            commands.entity(entity).remove::<NameTagEntity>();
+            commands.entity(name_tag_entity.0).despawn_recursive();
+        }
+        name_tag_cache.pending.remove(&entity);
+    }
+
+    // Also invalidate nametag when ClanMembership is removed (player leaves / kicked from clan).
+    for entity in removed_clan_membership.iter() {
+        if let Ok((_, name_tag_entity)) = query_nametags.get(entity) {
             commands.entity(entity).remove::<NameTagEntity>();
             commands.entity(name_tag_entity.0).despawn_recursive();
         }
@@ -473,11 +519,14 @@ pub fn name_tag_system(
             NameTagType::Character
         };
 
-        let cache_key = object
-            .personal_store
-            .map(|store| store.title.as_str())
-            .unwrap_or(object.name.name.as_str());
-        let name_tag_data = if let Some(name_tag_data) = name_tag_cache.cache.get(cache_key) {
+        let cache_key = if let Some(store) = object.personal_store {
+            store.title.clone()
+        } else if let Some(clan_membership) = &object.clan_membership {
+            format!("{}\n{}", object.name.name, clan_membership.name)
+        } else {
+            object.name.name.clone()
+        };
+        let name_tag_data = if let Some(name_tag_data) = name_tag_cache.cache.get(&cache_key) {
             name_tag_data
         } else if let Some(pending_name_tag_data) = name_tag_cache.pending.remove(&object.entity) {
             if let Some(name_tag_data) = create_nametag_data(
@@ -489,8 +538,8 @@ pub fn name_tag_system(
             ) {
                 name_tag_cache
                     .cache
-                    .insert(cache_key.to_string(), name_tag_data);
-                name_tag_cache.cache.get(cache_key).unwrap()
+                    .insert(cache_key.clone(), name_tag_data);
+                name_tag_cache.cache.get(&cache_key).unwrap()
             } else {
                 // Try again next frame
                 continue;
@@ -664,18 +713,37 @@ pub fn name_tag_system(
             });
         }
 
-        for rect in name_tag_data.rects.iter() {
-            commands
-                .spawn((
-                    NameTagName,
-                    rect.clone(),
-                    Transform::default(),
-                    GlobalTransform::default(),
-                    Visibility::default(),
-                    ComputedVisibility::default(),
-                    NoFrustumCulling,
-                ))
-                .set_parent(name_tag_entity);
+        for (rect_index, rect) in name_tag_data.rects.iter().enumerate() {
+            // First rect is clan name if there are 2 rows for a Character,
+            // use NameTagClanName so color update system does not override its blue color.
+            let is_clan_row = name_tag_type == NameTagType::Character
+                && name_tag_data.rects.len() == 2
+                && rect_index == 0;
+            if is_clan_row {
+                commands
+                    .spawn((
+                        NameTagClanName,
+                        rect.clone(),
+                        Transform::default(),
+                        GlobalTransform::default(),
+                        Visibility::default(),
+                        ComputedVisibility::default(),
+                        NoFrustumCulling,
+                    ))
+                    .set_parent(name_tag_entity);
+            } else {
+                commands
+                    .spawn((
+                        NameTagName,
+                        rect.clone(),
+                        Transform::default(),
+                        GlobalTransform::default(),
+                        Visibility::default(),
+                        ComputedVisibility::default(),
+                        NoFrustumCulling,
+                    ))
+                    .set_parent(name_tag_entity);
+            }
         }
 
         for rect in target_marks.drain(..) {

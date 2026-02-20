@@ -3,11 +3,11 @@ Changes compared to original exjam version :<br>
 Content : <br>
 -Skill leveling system implemented<br> 
 -Shop system implemented <br>
+-Clan system implemented ( creation, management, clan field... Clan is either created by talking to the usual NPC or /clan create XXX )<br>
 
 Extra features : <br>
 -2047 damage limit was removed <br>
 -/mon ID vs MON <br>
--Pressing F9 in game now brings up and item browser so you can get them easily <br> 
 
 Bug fixes :  <br>
 -Cliking on the exit button on the UI will exit the game correctly  <br>
