@@ -64,6 +64,7 @@ Note: This list should be compared with rose-offline, as this project expands on
 - You need to extract the mipmaps into a folder (called `rose mips` in this example).
 - This can be done by running the mipgen tool provided (PowerShell):
 
+```powershell 
 & "c:\FOLDER\rose-dds-mipgen.exe" `
   --input-path "c:\YOURCLIENT\data.idx" `
   --vfs-type rose `
@@ -71,11 +72,12 @@ Note: This list should be compared with rose-offline, as this project expands on
   --discovery-scope full `
   --filter kaiser `
   --report-json "c:\YOURCLIENT\mipgen-gate2.json"
+  ```
 
 The JSON report will tell you what succeeded and what failed.
 
 1 — Once this is done, all you have to do is set up your config.toml correctly:
-
+```
 [filesystem]
 devices = [
     { type = "vfs", path = "C:\\YOURCLIENT\\data.idx" },
@@ -89,6 +91,7 @@ port = 29000
 [graphics]
 anti_aliasing = "msaa"
 
+```
 Note: You must use double `\\` in the TOML configuration.
 
 You can change the AA setting. FXAA works but is fairly experimental; the current setup works best for anti-aliasing and shimmering. You may also notice that it uses a Kaiser filter for downsampling, which gave the best results.
