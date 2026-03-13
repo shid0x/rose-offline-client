@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use rose_game_common::messages::client::ClientMessage;
 
 use crate::scripting::{
-    lua4::Lua4Value, quest::quest_check_conditions, LuaUserValueEntity, ScriptFunctionContext,
-    ScriptFunctionResources,
+    lua4::Lua4Value, quest::quest_check_conditions, quest_check_result_allows_trigger,
+    LuaUserValueEntity, QuestCheckConditionsResult, ScriptFunctionContext, ScriptFunctionResources,
 };
 
 #[derive(Resource)]
@@ -77,13 +77,23 @@ fn QF_checkQuestCondition(
     parameters: Vec<Lua4Value>,
 ) -> Vec<Lua4Value> {
     if let Ok(quest_trigger_name) = parameters[0].to_string() {
-        if let Ok(true) =
-            quest_check_conditions(resources, context, quest_trigger_name.as_str().into())
-        {
-            return vec![1.into()];
+        let result = quest_check_conditions(resources, context, quest_trigger_name.as_str().into());
+        log::debug!(
+            target: "quest",
+            "QF_checkQuestCondition({}) => {:?}",
+            quest_trigger_name,
+            result
+        );
+
+        return vec![if quest_check_result_allows_trigger(result) {
+            1
+        } else {
+            0
         }
+        .into()];
     }
 
+    log::warn!(target: "quest", "QF_checkQuestCondition called with invalid parameters");
     vec![0.into()]
 }
 
@@ -94,9 +104,17 @@ fn QF_doQuestTrigger(
     parameters: Vec<Lua4Value>,
 ) -> Vec<Lua4Value> {
     let result = if let Ok(quest_trigger_name) = parameters[0].to_string() {
-        if let Ok(true) =
-            quest_check_conditions(resources, context, quest_trigger_name.as_str().into())
-        {
+        let check_result =
+            quest_check_conditions(resources, context, quest_trigger_name.as_str().into());
+
+        log::debug!(
+            target: "quest",
+            "QF_doQuestTrigger precheck({}) => {:?}",
+            quest_trigger_name,
+            check_result
+        );
+
+        if quest_check_result_allows_trigger(check_result) {
             if let Some(game_connection) = resources.game_connection.as_ref() {
                 game_connection
                     .client_message_tx
@@ -108,9 +126,17 @@ fn QF_doQuestTrigger(
 
             1
         } else {
+            if check_result == QuestCheckConditionsResult::TriggerNotFound {
+                log::warn!(
+                    target: "quest",
+                    "QF_doQuestTrigger failed: trigger not found ({})",
+                    quest_trigger_name
+                );
+            }
             0
         }
     } else {
+        log::warn!(target: "quest", "QF_doQuestTrigger called with invalid parameters");
         0
     };
 

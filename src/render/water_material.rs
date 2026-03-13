@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::num::NonZeroU32;
 
 use bevy::{
@@ -72,6 +74,7 @@ impl Plugin for WaterMaterialPlugin {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, ShaderType, Resource)]
 pub struct WaterPushConstantData {
     pub current_index: i32,
@@ -218,6 +221,8 @@ impl AsBindGroup for WaterMaterial {
             address_mode_v: AddressMode::Repeat,
             mag_filter: FilterMode::Linear,
             min_filter: FilterMode::Linear,
+            mipmap_filter: FilterMode::Linear,
+            anisotropy_clamp: 16,
             ..Default::default()
         });
 

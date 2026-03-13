@@ -13,6 +13,17 @@ use crate::{
     resources::{GameData, SoundCache, SoundSettings},
 };
 
+const CHARACTER_LEVEL_UP_EFFECT_PATH: &str = "3DDATA/EFFECT/LEVELUP_01.EFT";
+const PARTY_LEVEL_UP_EFFECT_PATH: &str = "3DDATA/EFFECT/PARTY_UP_01.EFT";
+
+fn level_up_effect_path(event: &ClientEntityEvent) -> Option<&'static str> {
+    match event {
+        ClientEntityEvent::LevelUp(_, _) => Some(CHARACTER_LEVEL_UP_EFFECT_PATH),
+        ClientEntityEvent::PartyLevelUp(_) => Some(PARTY_LEVEL_UP_EFFECT_PATH),
+        ClientEntityEvent::Die(_) => None,
+    }
+}
+
 pub fn client_entity_event_system(
     mut commands: Commands,
     mut client_entity_events: EventReader<ClientEntityEvent>,
@@ -56,9 +67,9 @@ pub fn client_entity_event_system(
                     }
                 }
             }
-            ClientEntityEvent::LevelUp(entity, level) => {
+            ClientEntityEvent::LevelUp(entity, _) | ClientEntityEvent::PartyLevelUp(entity) => {
                 let sound_category = if is_player(entity) {
-                    if let Some(level) = level {
+                    if let ClientEntityEvent::LevelUp(_, Some(level)) = event {
                         chatbox_events.send(ChatboxEvent::System(format!(
                             "Congratulations! You are now level {}!",
                             level
@@ -83,12 +94,39 @@ pub fn client_entity_event_system(
                     }
                 }
 
-                spawn_effect_events.send(SpawnEffectEvent::OnEntity(
-                    entity,
-                    None,
-                    SpawnEffectData::with_path(VfsPathBuf::new("3DDATA/EFFECT/LEVELUP_01.EFT")),
-                ));
+                if let Some(effect_path) = level_up_effect_path(event) {
+                    spawn_effect_events.send(SpawnEffectEvent::OnEntity(
+                        entity,
+                        None,
+                        SpawnEffectData::with_path(VfsPathBuf::new(effect_path)),
+                    ));
+                }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{level_up_effect_path, CHARACTER_LEVEL_UP_EFFECT_PATH, PARTY_LEVEL_UP_EFFECT_PATH};
+    use crate::events::ClientEntityEvent;
+    use bevy::prelude::Entity;
+
+    #[test]
+    fn level_up_event_uses_character_level_up_effect() {
+        let event = ClientEntityEvent::LevelUp(Entity::from_raw(1), Some(42));
+        assert_eq!(
+            level_up_effect_path(&event),
+            Some(CHARACTER_LEVEL_UP_EFFECT_PATH)
+        );
+    }
+
+    #[test]
+    fn party_level_up_event_uses_party_level_up_effect() {
+        let event = ClientEntityEvent::PartyLevelUp(Entity::from_raw(1));
+        assert_eq!(
+            level_up_effect_path(&event),
+            Some(PARTY_LEVEL_UP_EFFECT_PATH)
+        );
     }
 }

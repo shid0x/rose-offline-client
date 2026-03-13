@@ -186,6 +186,8 @@ impl FromWorld for ParticlePipeline {
                 address_mode_v: AddressMode::Repeat,
                 mag_filter: FilterMode::Linear,
                 min_filter: FilterMode::Linear,
+                mipmap_filter: FilterMode::Linear,
+                anisotropy_clamp: 16,
                 ..Default::default()
             }),
         }
@@ -581,7 +583,7 @@ fn batch_copy<T: Pod>(src: &[T], dst: &mut BufferVec<T>) {
     }
 }
 
-fn bind_buffer<T: Pod>(buffer: &BufferVec<T>, count: u64) -> BindingResource {
+fn bind_buffer<T: Pod>(buffer: &BufferVec<T>, count: u64) -> BindingResource<'_> {
     BindingResource::Buffer(BufferBinding {
         buffer: buffer.buffer().expect("missing buffer"),
         offset: 0,

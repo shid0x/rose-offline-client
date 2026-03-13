@@ -13,7 +13,7 @@ use rose_game_common::components::{
     ManaPoints, MoveSpeed, SkillList, SkillPoints, Stamina, StatPoints, Team, UnionMembership,
 };
 
-use crate::{bundles::ability_values_get_value, resources::GameData};
+use crate::{bundles::ability_values_get_value, components::SummonPoints, resources::GameData};
 
 const TOOLTIP_MAX_WIDTH: f32 = 300.0;
 
@@ -32,6 +32,7 @@ pub struct PlayerTooltipQuery<'w> {
     pub skill_points: &'w SkillPoints,
     pub stamina: &'w Stamina,
     pub stat_points: &'w StatPoints,
+    pub summon_points: Option<&'w SummonPoints>,
     pub team: &'w Team,
     pub union_membership: &'w UnionMembership,
 }
@@ -1053,17 +1054,39 @@ fn add_skill_steal_ability_value(ui: &mut egui::Ui, game_data: &GameData, skill_
     }
 }
 
-fn add_skill_summon_points(ui: &mut egui::Ui, game_data: &GameData, skill_data: &SkillData) {
+fn add_skill_summon_points(
+    ui: &mut egui::Ui,
+    game_data: &GameData,
+    player: Option<&PlayerTooltipQueryItem>,
+    skill_data: &SkillData,
+) {
     if let Some(summon_point_cost) = skill_data
         .summon_npc_id
         .and_then(|id| game_data.npcs.get_npc(id))
         .map(|npc_data| npc_data.summon_point_requirement)
     {
-        // TODO: Colour green / red for whether we have enough summon points
-        ui.label(format!(
-            "{}: {}",
-            game_data.client_strings.skill_summon_point_cost, summon_point_cost
-        ));
+        let mut color = egui::Color32::RED;
+        if let Some(player) = player {
+            let used_points = player
+                .summon_points
+                .map_or(0, |summon_points| summon_points.used_points as u32);
+            let max_points = player.summon_points.map_or(
+                player.ability_values.get_max_summon_points(),
+                |summon_points| summon_points.max_points as u32,
+            );
+            if summon_point_cost == 0 || used_points.saturating_add(summon_point_cost) <= max_points
+            {
+                color = egui::Color32::GREEN;
+            }
+        }
+
+        ui.colored_label(
+            color,
+            format!(
+                "{}: {}",
+                game_data.client_strings.skill_summon_point_cost, summon_point_cost
+            ),
+        );
     }
 }
 
@@ -1368,7 +1391,7 @@ pub fn ui_add_skill_tooltip(
                 add_skill_type(ui, game_data, skill_data);
                 add_skill_use_ability_value(ui, game_data, player, skill_data);
 
-                add_skill_summon_points(ui, game_data, skill_data);
+                add_skill_summon_points(ui, game_data, player, skill_data);
 
                 add_skill_requirements(ui, game_data, player, skill_data);
 

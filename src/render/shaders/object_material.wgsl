@@ -102,6 +102,7 @@ struct StaticMeshMaterialData {
     alpha_value: f32,
     lightmap_uv_offset: vec2<f32>,
     lightmap_uv_scale: f32,
+    glow_color: vec3<f32>,
 };
 
 const OBJECT_MATERIAL_FLAGS_ALPHA_MODE_OPAQUE: u32              = 1u;
@@ -109,6 +110,7 @@ const OBJECT_MATERIAL_FLAGS_ALPHA_MODE_MASK: u32                = 2u;
 const OBJECT_MATERIAL_FLAGS_ALPHA_MODE_BLEND: u32               = 4u;
 const OBJECT_MATERIAL_FLAGS_HAS_ALPHA_VALUE: u32                = 8u;
 const OBJECT_MATERIAL_FLAGS_SPECULAR: u32                       = 16u;
+const OBJECT_MATERIAL_FLAGS_HAS_GLOW: u32                       = 32u;
 
 struct FragmentInput {
     @builtin(position) frag_coord: vec4<f32>,
@@ -130,9 +132,16 @@ struct FragmentInput {
 fn fragment(in: FragmentInput) {
     var output_color: vec4<f32> = textureSample(base_texture, base_sampler, in.uv);
     if ((material.flags & OBJECT_MATERIAL_FLAGS_ALPHA_MODE_MASK) != 0u) {
+#ifdef ALPHA_TO_COVERAGE
+        // Lower threshold so semi-transparent fragments still write depth
+        if (output_color.a < 0.05) {
+            discard;
+        }
+#else
         if (output_color.a < material.alpha_cutoff) {
             discard;
         }
+#endif
     }
 }
 
@@ -169,6 +178,15 @@ fn fragment(in: FragmentInput) -> @location(0) vec4<f32> {
         // NOTE: If rendering as opaque, alpha should be ignored so set to 1.0
         output_color.a = 1.0;
     } else if ((material.flags & OBJECT_MATERIAL_FLAGS_ALPHA_MODE_MASK) != 0u) {
+#ifdef ALPHA_TO_COVERAGE
+        // Alpha-to-coverage: let MSAA hardware convert alpha to per-sample coverage.
+        // Only discard fully transparent pixels. Keep the raw texture alpha so the
+        // hardware can produce partial coverage on edges.
+        if (output_color.a < 0.004) {
+            discard;
+        }
+        // Don't force alpha to 1.0 — the raw value drives the coverage mask.
+#else
         if (output_color.a >= material.alpha_cutoff) {
             // NOTE: If rendering as masked alpha and >= the cutoff, render as fully opaque
             output_color.a = 1.0;
@@ -177,9 +195,16 @@ fn fragment(in: FragmentInput) -> @location(0) vec4<f32> {
             // NOTE: This and any other discards mean that early-z testing cannot be done!
             discard;
         }
+#endif
     }
 
-    return apply_zone_lighting(in.world_position, in.world_normal, output_color, view_z);
+    var result = apply_zone_lighting(in.world_position, in.world_normal, output_color, view_z);
+
+    if ((material.flags & OBJECT_MATERIAL_FLAGS_HAS_GLOW) != 0u) {
+        result = vec4<f32>(result.rgb + material.glow_color * output_color.rgb, result.a);
+    }
+
+    return result;
 }
 
 #endif  // else ifdef DEPTH_PREPASS

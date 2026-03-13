@@ -4,4 +4,5 @@ use bevy::prelude::{Entity, Event};
 pub enum ClientEntityEvent {
     Die(Entity),
     LevelUp(Entity, Option<u32>),
+    PartyLevelUp(Entity),
 }

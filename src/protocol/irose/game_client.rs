@@ -21,9 +21,10 @@ use rose_network_irose::{
         PacketClientCastSkillSelf, PacketClientCastSkillTargetEntity,
         PacketClientCastSkillTargetPosition, PacketClientChangeAmmo, PacketClientChangeEquipment,
         PacketClientChangeVehiclePart, PacketClientChat, PacketClientClanCommand,
-        PacketClientConnectRequest, PacketClientCraftItem, PacketClientDropItemFromInventory,
-        PacketClientEmote, PacketClientIncreaseBasicStat, PacketClientJoinZone,
-        PacketClientLevelUpSkill, PacketClientMove, PacketClientMoveCollision,
+        PacketClientConnectRequest, PacketClientCraftItem, PacketClientCreateItem,
+        PacketClientDropItemFromInventory, PacketClientEmote, PacketClientIncreaseBasicStat,
+        PacketClientJoinZone, PacketClientLevelUpSkill, PacketClientMessenger,
+        PacketClientMessengerChat, PacketClientMove, PacketClientMoveCollision,
         PacketClientMoveToggle, PacketClientMoveToggleType, PacketClientNpcStoreTransaction,
         PacketClientPartyReply, PacketClientPartyRequest, PacketClientPartyUpdateRules,
         PacketClientPersonalStoreBuyItem, PacketClientPersonalStoreListItems,
@@ -39,14 +40,15 @@ use rose_network_irose::{
         PacketServerCastSkillSelf, PacketServerCastSkillTargetEntity,
         PacketServerCastSkillTargetPosition, PacketServerChangeNpcId,
         PacketServerCharacterInventory, PacketServerCharacterQuestData, PacketServerClanCommand,
-        PacketServerClosePersonalStore, PacketServerCraftItem, PacketServerDamageEntity,
-        PacketServerFinishCastingSkill, PacketServerJoinZone, PacketServerLearnSkillResult,
-        PacketServerLevelUpSkillResult, PacketServerLocalChat, PacketServerLogoutResult,
+        PacketServerClosePersonalStore, PacketServerCraftItem, PacketServerCreateItemResult,
+        PacketServerDamageEntity, PacketServerFinishCastingSkill, PacketServerJoinZone,
+        PacketServerLearnSkillResult, PacketServerLevelUpSkillResult, PacketServerLocalChat,
+        PacketServerLogoutResult, PacketServerMessenger, PacketServerMessengerChat,
         PacketServerMoveEntity, PacketServerMoveToggle, PacketServerMoveToggleType,
         PacketServerNpcStoreTransactionError, PacketServerOpenPersonalStore,
-        PacketServerPartyMemberRewardItem, PacketServerPartyMemberUpdateInfo,
-        PacketServerPartyMembers, PacketServerPartyReply, PacketServerPartyRequest,
-        PacketServerPartyUpdateRules, PacketServerPersonalStoreItemList,
+        PacketServerPartyLevelXp, PacketServerPartyMemberRewardItem,
+        PacketServerPartyMemberUpdateInfo, PacketServerPartyMembers, PacketServerPartyReply,
+        PacketServerPartyRequest, PacketServerPartyUpdateRules, PacketServerPersonalStoreItemList,
         PacketServerPersonalStoreTransactionResult,
         PacketServerPersonalStoreTransactionUpdateMoneyAndInventory,
         PacketServerPickupItemDropResult, PacketServerQuestResult, PacketServerQuestResultType,
@@ -58,9 +60,9 @@ use rose_network_irose::{
         PacketServerTeleport, PacketServerUpdateAbilityValue, PacketServerUpdateAmmo,
         PacketServerUpdateBasicStat, PacketServerUpdateEquipment, PacketServerUpdateInventory,
         PacketServerUpdateItemLife, PacketServerUpdateLevel, PacketServerUpdateMoney,
-        PacketServerUpdateSpeed, PacketServerUpdateStatusEffects, PacketServerUpdateVehiclePart,
-        PacketServerUpdateXpStamina, PacketServerUseEmote, PacketServerUseItem,
-        PacketServerWhisper, ServerPackets,
+        PacketServerUpdateRecoveryRates, PacketServerUpdateSpeed, PacketServerUpdateStatusEffects,
+        PacketServerUpdateSummonPoints, PacketServerUpdateVehiclePart, PacketServerUpdateXpStamina,
+        PacketServerUseEmote, PacketServerUseItem, PacketServerWhisper, ServerPackets,
     },
     ClientPacketCodec, IROSE_112_TABLE,
 };
@@ -156,6 +158,7 @@ impl GameClient {
                         entity_id: response.entity_id,
                         experience_points: response.experience_points,
                         team: response.team,
+                        global_flags: response.global_flags,
                         health_points: response.health_points,
                         mana_points: response.mana_points,
                         world_ticks: response.world_ticks,
@@ -368,6 +371,47 @@ impl GameClient {
                     })
                     .ok();
             }
+            Some(ServerPackets::Messenger) => {
+                let message = PacketServerMessenger::try_from(packet)?;
+                let message = match message {
+                    PacketServerMessenger::FriendAddRequest { requester_id, name } => {
+                        ServerMessage::FriendAddRequest {
+                            requester_id,
+                            name: name.to_string(),
+                        }
+                    }
+                    PacketServerMessenger::FriendAdded { friend } => {
+                        ServerMessage::FriendAdded { friend }
+                    }
+                    PacketServerMessenger::FriendAddRejected { name } => {
+                        ServerMessage::FriendAddRejected {
+                            name: name.to_string(),
+                        }
+                    }
+                    PacketServerMessenger::FriendAddTargetNotFound { name } => {
+                        ServerMessage::FriendAddTargetNotFound {
+                            name: name.to_string(),
+                        }
+                    }
+                    PacketServerMessenger::FriendStatusChanged { friend_id, status } => {
+                        ServerMessage::FriendStatusChanged { friend_id, status }
+                    }
+                    PacketServerMessenger::FriendList { friends } => {
+                        ServerMessage::FriendList { friends }
+                    }
+                };
+                self.server_message_tx.send(message).ok();
+            }
+            Some(ServerPackets::MessengerChat) => {
+                let message = PacketServerMessengerChat::try_from(packet)?;
+                self.server_message_tx
+                    .send(ServerMessage::FriendChat {
+                        friend_id: message.friend_id,
+                        from_name: String::new(),
+                        text: message.text.to_string(),
+                    })
+                    .ok();
+            }
             Some(ServerPackets::UpdateAmmo) => {
                 let PacketServerUpdateAmmo {
                     entity_id,
@@ -495,6 +539,24 @@ impl GameClient {
                         entity_id: message.entity_id,
                         run_speed: message.run_speed,
                         passive_attack_speed: message.passive_attack_speed,
+                    })
+                    .ok();
+            }
+            Some(ServerPackets::UpdateSummonPoints) => {
+                let message = PacketServerUpdateSummonPoints::try_from(packet)?;
+                self.server_message_tx
+                    .send(ServerMessage::UpdateSummonPoints {
+                        used_points: message.used_points,
+                        max_points: message.max_points,
+                    })
+                    .ok();
+            }
+            Some(ServerPackets::UpdateRecoveryRates) => {
+                let message = PacketServerUpdateRecoveryRates::try_from(packet)?;
+                self.server_message_tx
+                    .send(ServerMessage::UpdateRecoveryRates {
+                        hp_bonus: message.hp_bonus,
+                        mp_bonus: message.mp_bonus,
                     })
                     .ok();
             }
@@ -888,6 +950,16 @@ impl GameClient {
                     })
                     .ok();
             }
+            Some(ServerPackets::PartyLevelXp) => {
+                let message = PacketServerPartyLevelXp::try_from(packet)?;
+                self.server_message_tx
+                    .send(ServerMessage::PartyLevelXp {
+                        level: message.level,
+                        xp: message.xp,
+                        is_level_up: message.is_level_up,
+                    })
+                    .ok();
+            }
             Some(ServerPackets::AdjustPosition) => {
                 let message = PacketServerAdjustPosition::try_from(packet)?;
                 self.server_message_tx
@@ -999,6 +1071,60 @@ impl GameClient {
                             .send(ServerMessage::CraftInsertGem {
                                 update_items: items,
                             })
+                            .ok();
+                    }
+                    PacketServerCraftItem::UpgradeSuccess { items } => {
+                        self.server_message_tx
+                            .send(ServerMessage::CraftUpgradeSuccess {
+                                update_items: items,
+                            })
+                            .ok();
+                    }
+                    PacketServerCraftItem::UpgradeFailed { items } => {
+                        self.server_message_tx
+                            .send(ServerMessage::CraftUpgradeFailed {
+                                update_items: items,
+                            })
+                            .ok();
+                    }
+                    PacketServerCraftItem::DisassembleSuccess { items } => {
+                        self.server_message_tx
+                            .send(ServerMessage::CraftDisassembleSuccess {
+                                update_items: items,
+                            })
+                            .ok();
+                    }
+                }
+            }
+            Some(ServerPackets::CreateItemResult) => {
+                let packet = PacketServerCreateItemResult::try_from(packet)?;
+                match packet {
+                    PacketServerCreateItemResult::Success {
+                        inventory_slot,
+                        item,
+                    } => {
+                        self.server_message_tx
+                            .send(ServerMessage::CraftCreateItemSuccess {
+                                inventory_slot,
+                                item,
+                            })
+                            .ok();
+                    }
+                    PacketServerCreateItemResult::Failed { error } => {
+                        use rose_game_common::messages::server::CraftCreateItemError;
+                        let error = match error {
+                            1 => CraftCreateItemError::Failed,
+                            2 => CraftCreateItemError::InvalidCondition,
+                            3 => CraftCreateItemError::NeedItem,
+                            4 => CraftCreateItemError::InvalidItem,
+                            5 => CraftCreateItemError::NeedSkillLevel,
+                            _ => {
+                                log::warn!("Unknown CreateItemResult error code {}", error);
+                                CraftCreateItemError::InvalidCondition
+                            }
+                        };
+                        self.server_message_tx
+                            .send(ServerMessage::CraftCreateItemError { error })
                             .ok();
                     }
                 }
@@ -1127,6 +1253,11 @@ impl GameClient {
                             .send(ServerMessage::ClanInviteResult { response })
                             .ok();
                     }
+                    PacketServerClanCommand::ClanUpgradeResult { result } => {
+                        self.server_message_tx
+                            .send(ServerMessage::ClanUpgradeResult { result })
+                            .ok();
+                    }
                     PacketServerClanCommand::ClanMemberJoined { name } => {
                         self.server_message_tx
                             .send(ServerMessage::ClanMemberJoined { name })
@@ -1143,9 +1274,7 @@ impl GameClient {
                             .ok();
                     }
                     PacketServerClanCommand::ClanKicked => {
-                        self.server_message_tx
-                            .send(ServerMessage::ClanKicked)
-                            .ok();
+                        self.server_message_tx.send(ServerMessage::ClanKicked).ok();
                     }
                     PacketServerClanCommand::ClanDisbanded => {
                         self.server_message_tx
@@ -1221,6 +1350,42 @@ impl GameClient {
             ClientMessage::Chat { ref text } => {
                 connection
                     .write_packet(Packet::from(&PacketClientChat { text }))
+                    .await?
+            }
+            ClientMessage::FriendListRequest => {
+                connection
+                    .write_packet(Packet::from(&PacketClientMessenger::FriendList))
+                    .await?
+            }
+            ClientMessage::FriendAdd { ref name } => {
+                connection
+                    .write_packet(Packet::from(&PacketClientMessenger::FriendAdd { name }))
+                    .await?
+            }
+            ClientMessage::FriendAddResponse {
+                requester_id,
+                accept,
+            } => {
+                connection
+                    .write_packet(Packet::from(&PacketClientMessenger::FriendAddResponse {
+                        requester_id,
+                        accept,
+                    }))
+                    .await?
+            }
+            ClientMessage::FriendRemove { friend_id } => {
+                connection
+                    .write_packet(Packet::from(&PacketClientMessenger::FriendRemove {
+                        friend_id,
+                    }))
+                    .await?
+            }
+            ClientMessage::FriendChat {
+                friend_id,
+                ref text,
+            } => {
+                connection
+                    .write_packet(Packet::from(&PacketClientMessengerChat { friend_id, text }))
                     .await?
             }
             ClientMessage::ChangeAmmo {
@@ -1591,6 +1756,13 @@ impl GameClient {
                     .write_packet(Packet::from(&PacketClientClanCommand::Demote { name }))
                     .await?;
             }
+            ClientMessage::ClanUpgrade { npc_entity_id } => {
+                connection
+                    .write_packet(Packet::from(&PacketClientClanCommand::Upgrade {
+                        npc_entity_id,
+                    }))
+                    .await?;
+            }
             ClientMessage::ClanLeave => {
                 connection
                     .write_packet(Packet::from(&PacketClientClanCommand::Leave))
@@ -1659,6 +1831,24 @@ impl GameClient {
                         ingredients,
                     }))
                     .await?;
+            }
+            ClientMessage::CraftCreateItem {
+                skill_slot,
+                target_item_type,
+                target_item_number,
+                material_inventory_slots,
+            } => {
+                use rose_data_irose::encode_item_type;
+                if let Some(item_type_id) = encode_item_type(target_item_type) {
+                    connection
+                        .write_packet(Packet::from(&PacketClientCreateItem {
+                            skill_slot,
+                            target_item_type: item_type_id as u8,
+                            target_item_number: target_item_number as u16,
+                            material_inventory_slots,
+                        }))
+                        .await?;
+                }
             }
             ClientMessage::RepairItemUsingItem {
                 use_item_slot,

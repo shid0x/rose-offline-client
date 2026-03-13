@@ -19,6 +19,11 @@ pub enum DragAndDropId {
     NpcStoreSellList(usize),
     PersonalStoreSell(usize),
     Bank(usize),
+    CraftMaterial(usize),
+    CraftOutput,
+    CraftUpgradeTarget,
+    CraftUpgradeIngredient(usize),
+    CraftDisassembleInput,
 }
 
 pub struct DragAndDropSlot<'a> {
@@ -28,6 +33,7 @@ pub struct DragAndDropSlot<'a> {
     sprite: Option<UiSprite>,
     socket_sprite: Option<UiSprite>,
     broken: bool,
+    darkened: bool,
     cooldown_percent: Option<f32>,
     quantity: Option<usize>,
     quantity_margin: f32,
@@ -56,6 +62,7 @@ impl<'a> DragAndDropSlot<'a> {
             sprite,
             socket_sprite,
             broken,
+            darkened: false,
             cooldown_percent,
             quantity,
             quantity_margin: 2.0,
@@ -156,6 +163,7 @@ impl<'a> DragAndDropSlot<'a> {
             sprite,
             socket_sprite,
             broken,
+            darkened: false,
             cooldown_percent,
             quantity,
             quantity_margin: 2.0,
@@ -163,6 +171,16 @@ impl<'a> DragAndDropSlot<'a> {
             dragged_item: Some(dragged_item),
             dropped_item: Some(dropped_item),
         }
+    }
+
+    pub fn set_darkened(mut self, darkened: bool) -> Self {
+        self.darkened = darkened;
+        self
+    }
+
+    pub fn set_quantity(mut self, quantity: Option<usize>) -> Self {
+        self.quantity = quantity;
+        self
     }
 
     pub fn with_skill(
@@ -201,6 +219,7 @@ impl<'a> DragAndDropSlot<'a> {
             sprite,
             socket_sprite: None,
             broken: false,
+            darkened: false,
             cooldown_percent,
             quantity: None,
             quantity_margin: 2.0,
@@ -341,10 +360,12 @@ impl<'w> DragAndDropSlot<'w> {
                 mesh.add_rect_with_uv(
                     content_rect,
                     sprite.uv,
-                    if !self.broken {
-                        egui::Color32::WHITE
-                    } else {
+                    if self.broken {
                         egui::Color32::LIGHT_RED
+                    } else if self.darkened {
+                        egui::Color32::from_rgb(128, 128, 128)
+                    } else {
+                        egui::Color32::WHITE
                     },
                 );
                 ui.painter().add(Shape::mesh(mesh));

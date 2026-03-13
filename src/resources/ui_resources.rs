@@ -105,6 +105,7 @@ impl UiCursor {
 pub struct UiResources {
     pub loaded_all_textures: bool,
     pub sprite_sheets: EnumMap<UiSpriteSheetType, Option<UiSpriteSheet>>,
+    pub personal_store_title_box: Handle<Image>,
 
     pub dialog_files: HashMap<String, Handle<Dialog>>,
     pub dialog_login: Handle<Dialog>,
@@ -112,6 +113,7 @@ pub struct UiResources {
     pub dialog_character_info: Handle<Dialog>,
     pub dialog_chatbox: Handle<Dialog>,
     pub dialog_clan: Handle<Dialog>,
+    pub dialog_community: Handle<Dialog>,
     pub dialog_create_avatar: Handle<Dialog>,
     pub dialog_create_clan: Handle<Dialog>,
     pub dialog_game_menu: Handle<Dialog>,
@@ -125,11 +127,13 @@ pub struct UiResources {
     pub dialog_party_option: Handle<Dialog>,
     pub dialog_personal_store: Handle<Dialog>,
     pub dialog_player_info: Handle<Dialog>,
+    pub dialog_private_chat: Handle<Dialog>,
     pub dialog_quest_list: Handle<Dialog>,
     pub dialog_respawn: Handle<Dialog>,
     pub dialog_select_server: Handle<Dialog>,
     pub dialog_skill_list: Handle<Dialog>,
     pub dialog_skill_tree: Handle<Dialog>,
+    pub dialog_add_friend: Handle<Dialog>,
     pub skill_tree_dealer: Handle<Dialog>,
     pub skill_tree_hawker: Handle<Dialog>,
     pub skill_tree_muse: Handle<Dialog>,
@@ -517,10 +521,12 @@ pub fn load_ui_resources(
                 })
             }
         },
+        personal_store_title_box: asset_server.load("3DDATA/CONTROL/RES/SHOPBOX01.DDS"),
         dialog_bank: dialog_files["DLGBANK.XML"].clone(),
         dialog_character_info: dialog_files["DLGAVATA.XML"].clone(),
         dialog_chatbox: dialog_files["DLGCHAT.XML"].clone(),
         dialog_clan: dialog_files["DLGCLAN.XML"].clone(),
+        dialog_community: dialog_files["DLGCOMM.XML"].clone(),
         dialog_create_avatar: dialog_files[
             "DLGCREATEAVATAR.XML"].clone(),
             dialog_create_clan: dialog_files[
@@ -537,11 +543,13 @@ pub fn load_ui_resources(
         dialog_party_option: dialog_files["DLGPARTYOPTION.XML"].clone(),
         dialog_personal_store: dialog_files["DLGAVATARSTORE.XML"].clone(),
         dialog_player_info: dialog_files["DLGINFO.XML"].clone(),
+        dialog_private_chat: dialog_files["DLGPRIVATECHAT.XML"].clone(),
         dialog_quest_list: dialog_files["DLGQUEST.XML"].clone(),
         dialog_respawn: dialog_files["DLGRESTART.XML"].clone(),
         dialog_select_server: dialog_files["DLGSELSVR.XML"].clone(),
         dialog_skill_list: dialog_files["DLGSKILL.XML"].clone(),
         dialog_skill_tree: dialog_files["DLGSKILLTREE.XML"].clone(),
+        dialog_add_friend: dialog_files["DLGADDFRIEND.XML"].clone(),
         skill_tree_dealer: dialog_files["SKILLTREE_DEALER.XML"].clone(),
         skill_tree_hawker: dialog_files["SKILLTREE_HOWKER.XML"].clone(),
         skill_tree_muse: dialog_files["SKILLTREE_MUSE.XML"].clone(),

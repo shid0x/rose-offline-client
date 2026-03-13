@@ -6,7 +6,7 @@ use bevy::{
 use rose_game_common::components::{Level, Team};
 
 use crate::{
-    components::{NameTag, NameTagName, NameTagType, PlayerCharacter},
+    components::{NameTag, NameTagName, NameTagType, PersonalStore, PlayerCharacter},
     render::WorldUiRect,
     systems::name_tag_system::get_monster_name_tag_color,
 };
@@ -21,6 +21,7 @@ pub fn name_tag_update_color_system(
     query_player: Query<PlayerQuery, (With<PlayerCharacter>, Or<(Changed<Level>, Changed<Team>)>)>,
     query_nametags: Query<(&Parent, &NameTag, &Children)>,
     query_level: Query<&Level>,
+    query_personal_store: Query<(), With<PersonalStore>>,
     query_team: Query<&Team>,
     mut query_name_rects: Query<&mut WorldUiRect, With<NameTagName>>,
 ) {
@@ -34,7 +35,9 @@ pub fn name_tag_update_color_system(
         let color = match nametag.name_tag_type {
             NameTagType::Npc => continue,
             NameTagType::Character => {
-                if query_team
+                if query_personal_store.contains(parent.get()) {
+                    Color::WHITE
+                } else if query_team
                     .get(parent.get())
                     .map_or(false, |team| team.id != player.team.id)
                 {

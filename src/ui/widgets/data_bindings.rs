@@ -16,6 +16,11 @@ pub struct DataBindings<'a, 'w> {
     pub gauge: &'a mut [(i32, &'a f32, &'a str)],
     pub label: &'a mut [(i32, &'a str)],
     pub listbox: &'a mut [(i32, (&'a mut i32, &'a dyn Fn(i32) -> Option<String>))],
+    pub combo: &'a mut [(
+        i32,
+        (&'a mut i32, Range<i32>, &'a dyn Fn(i32) -> Option<String>),
+    )],
+    pub combo_changed: &'a mut [(i32, &'a mut Option<i32>)],
     pub tabs: &'a mut [(i32, &'a mut i32)],
     pub radio: &'a mut [(i32, &'a mut i32)],
     pub scroll: &'a mut [(i32, (&'a mut i32, Range<i32>, i32))], // (current_scroll, scroll_range, num_visible)
@@ -122,6 +127,26 @@ impl<'a, 'w> DataBindings<'a, 'w> {
             .iter_mut()
             .find(|(x, _)| *x == id)
             .map(|(_, (a, b))| (&mut **a, &**b))
+    }
+
+    pub fn has_combo(&self, id: i32) -> bool {
+        self.combo.iter().any(|(x, _)| *x == id)
+    }
+
+    pub fn get_combo(
+        &mut self,
+        id: i32,
+    ) -> Option<(&mut i32, Range<i32>, &dyn Fn(i32) -> Option<String>)> {
+        self.combo
+            .iter_mut()
+            .find(|(x, _)| *x == id)
+            .map(|(_, (a, b, c))| (&mut **a, b.clone(), &**c))
+    }
+
+    pub fn set_combo_changed(&mut self, id: i32, selected_index: i32) {
+        if let Some((_, out)) = self.combo_changed.iter_mut().find(|(x, _)| *x == id) {
+            **out = Some(selected_index);
+        }
     }
 
     pub fn get_zlist(

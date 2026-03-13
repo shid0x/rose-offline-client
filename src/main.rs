@@ -149,6 +149,15 @@ fn main() {
     let mut config = matches
         .value_of("config")
         .map(Path::new)
+        .or_else(|| {
+            // Auto-load config.toml from the working directory if it exists
+            let default_path = Path::new("config.toml");
+            if default_path.exists() {
+                Some(default_path)
+            } else {
+                None
+            }
+        })
         .map_or_else(Config::default, load_config);
 
     if let Some(ip) = matches.value_of("ip") {

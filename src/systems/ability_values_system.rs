@@ -2,7 +2,7 @@ use bevy::prelude::{Changed, Or, ParamSet, Query, Res};
 
 use rose_game_common::components::{
     AbilityValues, BasicStats, CharacterInfo, Equipment, HealthPoints, Level, ManaPoints, MoveMode,
-    MoveSpeed, Npc, SkillList, StatusEffects,
+    MoveSpeed, Npc, RecoveryRateBonus, SkillList, StatusEffects,
 };
 
 use crate::resources::GameData;
@@ -17,6 +17,7 @@ pub fn ability_values_system(
                 &Equipment,
                 &BasicStats,
                 &SkillList,
+                Option<&RecoveryRateBonus>,
                 &StatusEffects,
             ),
             Or<(
@@ -25,6 +26,7 @@ pub fn ability_values_system(
                 Changed<Equipment>,
                 Changed<BasicStats>,
                 Changed<SkillList>,
+                Changed<RecoveryRateBonus>,
                 Changed<StatusEffects>,
             )>,
         >,
@@ -53,6 +55,7 @@ pub fn ability_values_system(
             equipment,
             basic_stats,
             skill_list,
+            recovery_rate_bonus,
             status_effects,
         )| {
             // Update character ability values
@@ -64,6 +67,10 @@ pub fn ability_values_system(
                 skill_list,
                 status_effects,
             );
+            if let Some(recovery_rate_bonus) = recovery_rate_bonus {
+                ability_values.additional_health_recovery += recovery_rate_bonus.hp_bonus;
+                ability_values.additional_mana_recovery += recovery_rate_bonus.mp_bonus;
+            }
         },
     );
 

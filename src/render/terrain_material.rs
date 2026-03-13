@@ -177,6 +177,8 @@ impl AsBindGroup for TerrainMaterial {
             address_mode_v: AddressMode::ClampToEdge,
             mag_filter: FilterMode::Linear,
             min_filter: FilterMode::Linear,
+            mipmap_filter: FilterMode::Linear,
+            anisotropy_clamp: 16,
             ..Default::default()
         });
 

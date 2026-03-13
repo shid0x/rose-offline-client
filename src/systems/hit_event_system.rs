@@ -48,10 +48,16 @@ fn apply_damage(
     damage_digits_spawner: &DamageDigitsSpawner,
     client_entity_list: &mut ClientEntityList,
 ) {
-    if defender.health_points.hp < damage.amount {
+    if is_killed {
+        defender.health_points.hp = i32::max(defender.health_points.hp - damage.amount, 0);
+    } else if defender.health_points.hp <= damage.amount {
         defender.health_points.hp = 0;
     } else {
         defender.health_points.hp -= damage.amount;
+    }
+
+    if !is_killed && defender.health_points.hp == 0 {
+        defender.health_points.hp = 1;
     }
 
     damage_digits_spawner.spawn(

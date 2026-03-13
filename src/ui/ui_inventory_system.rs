@@ -5,7 +5,7 @@ use bevy::{
 use bevy_egui::{egui, EguiContexts};
 use enum_map::{enum_map, EnumMap};
 
-use rose_data::{AmmoIndex, EquipmentIndex, Item, VehiclePartIndex};
+use rose_data::{AmmoIndex, EquipmentIndex, Item, ItemClass, ItemType, VehiclePartIndex};
 use rose_game_common::components::{
     Equipment, Inventory, InventoryPageType, ItemSlot, INVENTORY_PAGE_SIZE,
 };
@@ -145,6 +145,7 @@ fn drag_accepts_equipment(drag_source: &DragAndDropId) -> bool {
         drag_source,
         DragAndDropId::Inventory(ItemSlot::Inventory(InventoryPageType::Equipment, _))
             | DragAndDropId::Inventory(ItemSlot::Equipment(_))
+            | DragAndDropId::Inventory(ItemSlot::Inventory(InventoryPageType::Materials, _))
     )
 }
 
@@ -255,6 +256,9 @@ fn ui_add_inventory_slot(
         ItemSlot::Vehicle(_) => drag_accepts_vehicles,
     };
     let item = (player.equipment, player.inventory).get_item(inventory_slot);
+    let is_pending_sell = ui_state_dnd
+        .pending_sell_item_slots
+        .contains(&inventory_slot);
 
     let mut dropped_item = None;
     let response = ui
@@ -272,7 +276,8 @@ fn ui_add_inventory_slot(
                         &mut ui_state_dnd.dragged_item,
                         &mut dropped_item,
                         [40.0, 40.0],
-                    ),
+                    )
+                    .set_darkened(is_pending_sell),
                     ui,
                 )
             },
@@ -381,12 +386,37 @@ fn ui_add_inventory_slot(
                     unequip_vehicle_part_index = Some(vehicle_part_index);
                 }
             },
-            ItemSlot::Equipment(_) => {
+            ItemSlot::Equipment(target_equipment_index) => {
                 if matches!(
                     dropped_inventory_slot,
                     ItemSlot::Inventory(InventoryPageType::Equipment, _)
                 ) {
                     equip_equipment_inventory_slot = Some(dropped_inventory_slot);
+                } else if matches!(
+                    dropped_inventory_slot,
+                    ItemSlot::Inventory(InventoryPageType::Materials, _)
+                ) {
+                    // Check if the dropped item is a gem and the target has a socket
+                    let is_gem = (player.equipment, player.inventory)
+                        .get_item(dropped_inventory_slot)
+                        .map_or(false, |item| {
+                            item.get_item_type() == ItemType::Gem
+                                && game_data
+                                    .items
+                                    .get_base_item(item.get_item_reference())
+                                    .map_or(false, |item_data| item_data.class == ItemClass::Jewel)
+                        });
+                    let target_has_empty_socket = player
+                        .equipment
+                        .get_equipment_item(target_equipment_index)
+                        .map_or(false, |eq| eq.has_socket && eq.gem <= 300);
+
+                    if is_gem && target_has_empty_socket {
+                        player_command_events.send(PlayerCommandEvent::InsertGem(
+                            target_equipment_index,
+                            dropped_inventory_slot,
+                        ));
+                    }
                 }
             }
             ItemSlot::Ammo(_) => {

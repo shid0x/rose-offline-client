@@ -5,9 +5,10 @@ use bevy::{
 use bevy_egui::{egui, EguiContexts};
 
 use rose_game_common::{
-    components::{AbilityValues, CharacterInfo, HealthPoints, Level},
+    components::{AbilityValues, CharacterInfo, CharacterUniqueId, HealthPoints, Level},
     messages::{
-        client::ClientMessage, server::PartyMemberInfo, ClientEntityId, PartyRejectInviteReason,
+        client::ClientMessage, server::PartyMemberInfo, server::PartyMemberInfoOnline,
+        ClientEntityId, PartyRejectInviteReason,
     },
 };
 
@@ -32,6 +33,60 @@ const IID_BTN_LEAVE: i32 = 13;
 const IID_BTN_OPTION: i32 = 14;
 const IID_PARTY_XP_GAUGE: i32 = 1001;
 const IID_PARTY_MEMBER_HP_GAUGE: i32 = 1002;
+const PARTY_WINDOW_RIGHT_MARGIN: f32 = 24.0;
+const PARTY_WINDOW_TOP_OFFSET: f32 = 300.0;
+const PARTY_INVITE_WINDOW_WIDTH: f32 = 360.0;
+const PARTY_INVITE_BUTTON_WIDTH: f32 = 120.0;
+const PARTY_INVITE_BUTTON_HEIGHT: f32 = 36.0;
+
+#[derive(Clone, Copy, Debug)]
+enum PartyDisplayRow<'a> {
+    Player,
+    Member(&'a PartyMemberInfo),
+}
+
+fn compute_hp_percent(hp: i32, max_hp: i32) -> f32 {
+    if max_hp > 0 {
+        (hp as f32 / max_hp as f32).clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+fn compute_party_member_hp_percent(
+    member_info: &PartyMemberInfoOnline,
+    fallback: Option<(i32, i32)>,
+) -> f32 {
+    let (hp, max_hp) = if member_info.max_health > 0 {
+        (member_info.health_points.hp, member_info.max_health)
+    } else {
+        fallback.unwrap_or((member_info.health_points.hp, member_info.max_health))
+    };
+
+    compute_hp_percent(hp, max_hp)
+}
+
+fn build_party_display_rows<'a>(
+    owner: &PartyOwner,
+    members: &'a [PartyMemberInfo],
+) -> Vec<PartyDisplayRow<'a>> {
+    let insert_index = match owner {
+        PartyOwner::Player => 0,
+        PartyOwner::Character(owner_character_id) => members
+            .iter()
+            .position(|member| member.get_character_id() == *owner_character_id)
+            .map(|index| index + 1)
+            .unwrap_or(0),
+        PartyOwner::Unknown => 0,
+    };
+
+    let mut rows = members
+        .iter()
+        .map(PartyDisplayRow::Member)
+        .collect::<Vec<_>>();
+    rows.insert(insert_index.min(rows.len()), PartyDisplayRow::Player);
+    rows
+}
 
 #[derive(WorldQuery)]
 pub struct PlayerQuery<'w> {
@@ -62,7 +117,7 @@ pub struct UiStatePartySystem {
     pending_invites: Vec<PendingPartyInvite>,
     party_xp_gauge: Gauge,
     party_member_health_gauge: Gauge,
-    selected_party_member_index: Option<usize>,
+    selected_party_member_id: Option<CharacterUniqueId>,
 }
 
 impl Default for UiStatePartySystem {
@@ -89,7 +144,7 @@ impl Default for UiStatePartySystem {
                 background_sprite_name: "UI18_GUAGE_HP_BASE".into(),
                 ..Default::default()
             },
-            selected_party_member_index: None,
+            selected_party_member_id: None,
         }
     }
 }
@@ -147,31 +202,74 @@ pub fn ui_party_system(
         let pending_invite = &ui_state.pending_invites[i];
 
         if player.party_info.is_none() {
+            let invite_text = format!(
+                "{} has invited you to {} a party.",
+                &pending_invite.name,
+                if pending_invite.is_create {
+                    "create"
+                } else {
+                    "join"
+                }
+            );
+
             egui::Window::new("Party Invite")
                 .id(egui::Id::new(format!(
                     "party_invite_{}",
                     &pending_invite.name
                 )))
                 .collapsible(false)
+                .resizable(false)
+                .default_width(PARTY_INVITE_WINDOW_WIDTH)
+                .pivot(egui::Align2::CENTER_CENTER)
+                .default_pos(egui_context.ctx_mut().screen_rect().center())
                 .open(&mut window_open)
                 .show(egui_context.ctx_mut(), |ui| {
-                    ui.label(format!(
-                        "{} has invited you to {} a party",
-                        &pending_invite.name,
-                        if pending_invite.is_create {
-                            "create"
-                        } else {
-                            "join"
-                        }
-                    ));
+                    ui.set_min_width(PARTY_INVITE_WINDOW_WIDTH);
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(10.0);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(PARTY_INVITE_WINDOW_WIDTH - 40.0, 0.0),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(invite_text.clone()).size(18.0),
+                                    )
+                                    .wrap(true),
+                                );
+                            },
+                        );
+                        ui.add_space(18.0);
+                        ui.horizontal(|ui| {
+                            let total_width = ui.available_width();
+                            let button_spacing = 20.0;
+                            let button_row_width = PARTY_INVITE_BUTTON_WIDTH * 2.0 + button_spacing;
+                            ui.add_space((total_width - button_row_width).max(0.0) * 0.5);
 
-                    if ui.button("Accept").clicked() {
-                        accepted = true;
-                    }
+                            if ui
+                                .add_sized(
+                                    [PARTY_INVITE_BUTTON_WIDTH, PARTY_INVITE_BUTTON_HEIGHT],
+                                    egui::Button::new(egui::RichText::new("Accept").size(17.0)),
+                                )
+                                .clicked()
+                            {
+                                accepted = true;
+                            }
 
-                    if ui.button("Reject").clicked() {
-                        rejected = true;
-                    }
+                            ui.add_space(button_spacing);
+
+                            if ui
+                                .add_sized(
+                                    [PARTY_INVITE_BUTTON_WIDTH, PARTY_INVITE_BUTTON_HEIGHT],
+                                    egui::Button::new(egui::RichText::new("Reject").size(17.0)),
+                                )
+                                .clicked()
+                            {
+                                rejected = true;
+                            }
+                        });
+                        ui.add_space(10.0);
+                    });
                 });
         } else {
             rejected = true;
@@ -244,14 +342,32 @@ pub fn ui_party_system(
     let mut response_kick_button = None;
     let mut response_leave_button = None;
     let mut response_option_button = None;
+    let screen_size = egui_context
+        .ctx_mut()
+        .input(|input| input.screen_rect().size());
 
     ui_state_windows.party_open = player.party_info.is_some();
 
     if let Some(party_info) = player.party_info {
         let player_is_owner = matches!(party_info.owner, PartyOwner::Player);
+        let party_display_rows = build_party_display_rows(&party_info.owner, &party_info.members);
+
+        // Compute party XP gauge values
+        let party_level = party_info.level;
+        let party_xp = party_info.experience;
+        let need_xp = (party_level + 7) * (party_level + 10) + 40;
+        let xp_pct = if need_xp > 0 {
+            (party_xp as f32 / need_xp as f32).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let xp_label = format!("{:.0}%", xp_pct * 100.0);
 
         egui::Window::new("Party2")
-            .anchor(egui::Align2::RIGHT_CENTER, [0.0, 0.0])
+            .default_pos(egui::pos2(
+                (screen_size.x - dialog.width - PARTY_WINDOW_RIGHT_MARGIN).max(0.0),
+                PARTY_WINDOW_TOP_OFFSET,
+            ))
             .frame(egui::Frame::none())
             .title_bar(false)
             .resizable(false)
@@ -262,7 +378,7 @@ pub fn ui_party_system(
                     ui,
                     DataBindings {
                         sound_events: Some(&mut ui_sound_events),
-                        gauge: &mut [(IID_PARTY_XP_GAUGE, &0.5, "50%")],
+                        gauge: &mut [(IID_PARTY_XP_GAUGE, &xp_pct, &xp_label)],
                         response: &mut [
                             (IID_BTN_ENTRUST, &mut response_entrust_button),
                             (IID_BTN_BAN, &mut response_kick_button),
@@ -281,32 +397,28 @@ pub fn ui_party_system(
                             egui::RichText::new("Party").color(egui::Color32::BLACK),
                         );
 
-                        ui.add_label_at(egui::pos2(17.0, 34.0), format!("Party Level: {}", 1));
+                        ui.add_label_at(
+                            egui::pos2(17.0, 34.0),
+                            format!("Party Level: {}", party_level),
+                        );
 
                         ui_state.party_xp_gauge.draw_widget(ui, bindings);
 
                         ui.vertical(|ui| {
-                            for (index, member) in party_info.members.iter().enumerate() {
+                            for row in party_display_rows.iter() {
                                 let (rect, response) = ui.allocate_exact_size(
                                     egui::vec2(220.0, 45.0),
                                     egui::Sense::click(),
                                 );
-                                {
+                                let (character_id, selected_client_entity) = {
                                     let ui = &mut ui.child_ui(rect, egui::Layout::default());
-                                    let selected =
-                                        ui_state.selected_party_member_index == Some(index);
-                                    let (online, name) = match member {
-                                        PartyMemberInfo::Online(member_info) => {
-                                            if let Some(party_member) = client_entity_list
-                                                .get(member_info.entity_id)
-                                                .and_then(|entity| {
-                                                    query_party_member.get(entity).ok()
-                                                })
-                                            {
-                                                let hp_percent = party_member.health_points.hp
-                                                    as f32
-                                                    / party_member.ability_values.get_max_health()
-                                                        as f32;
+                                    let (character_id, online, name, selected_client_entity) =
+                                        match row {
+                                            PartyDisplayRow::Player => {
+                                                let hp_percent = compute_hp_percent(
+                                                    player.health_points.hp,
+                                                    player.ability_values.get_max_health(),
+                                                );
 
                                                 ui_state.party_member_health_gauge.x = 220.0
                                                     - ui_state.party_member_health_gauge.width;
@@ -322,14 +434,71 @@ pub fn ui_party_system(
                                                         ..Default::default()
                                                     },
                                                 );
-                                            }
 
-                                            (true, &member_info.name)
-                                        }
-                                        PartyMemberInfo::Offline(member_info) => {
-                                            (false, &member_info.name)
-                                        }
-                                    };
+                                                (
+                                                    player.character_info.unique_id,
+                                                    true,
+                                                    player.character_info.name.as_str(),
+                                                    Some(player.entity),
+                                                )
+                                            }
+                                            PartyDisplayRow::Member(member) => match member {
+                                                PartyMemberInfo::Online(member_info) => {
+                                                    let fallback_hp = client_entity_list
+                                                        .get(member_info.entity_id)
+                                                        .and_then(|entity| {
+                                                            query_party_member.get(entity).ok()
+                                                        })
+                                                        .map(|party_member| {
+                                                            (
+                                                                party_member.health_points.hp,
+                                                                party_member
+                                                                    .ability_values
+                                                                    .get_max_health(),
+                                                            )
+                                                        });
+                                                    let hp_percent =
+                                                        compute_party_member_hp_percent(
+                                                            member_info,
+                                                            fallback_hp,
+                                                        );
+
+                                                    ui_state.party_member_health_gauge.x = 220.0
+                                                        - ui_state.party_member_health_gauge.width;
+                                                    ui_state.party_member_health_gauge.y = 25.0;
+                                                    ui_state.party_member_health_gauge.draw_widget(
+                                                        ui,
+                                                        &mut DataBindings {
+                                                            gauge: &mut [(
+                                                                IID_PARTY_MEMBER_HP_GAUGE,
+                                                                &hp_percent,
+                                                                &format!(
+                                                                    "{:.2}%",
+                                                                    100.0 * hp_percent
+                                                                ),
+                                                            )],
+                                                            ..Default::default()
+                                                        },
+                                                    );
+
+                                                    (
+                                                        member_info.character_id,
+                                                        true,
+                                                        member_info.name.as_str(),
+                                                        client_entity_list
+                                                            .get(member_info.entity_id),
+                                                    )
+                                                }
+                                                PartyMemberInfo::Offline(member_info) => (
+                                                    member_info.character_id,
+                                                    false,
+                                                    member_info.name.as_str(),
+                                                    None,
+                                                ),
+                                            },
+                                        };
+                                    let selected =
+                                        ui_state.selected_party_member_id == Some(character_id);
 
                                     ui.add_label_at(
                                         egui::pos2(4.0, 26.0),
@@ -345,17 +514,15 @@ pub fn ui_party_system(
                                             egui::Color32::GRAY
                                         }),
                                     );
-                                }
+                                    (character_id, selected_client_entity)
+                                };
 
                                 if response.clicked() {
-                                    if let Some(entity) = member
-                                        .get_client_entity_id()
-                                        .and_then(|entity_id| client_entity_list.get(entity_id))
-                                    {
+                                    if let Some(entity) = selected_client_entity {
                                         selected_target.selected = Some(entity);
                                     }
 
-                                    ui_state.selected_party_member_index = Some(index);
+                                    ui_state.selected_party_member_id = Some(character_id);
                                 }
                             }
                         });
@@ -364,9 +531,13 @@ pub fn ui_party_system(
             });
 
         if player_is_owner {
-            if let Some(selected_party_member) = ui_state
-                .selected_party_member_index
-                .and_then(|index| party_info.members.get(index))
+            if let Some(selected_party_member) =
+                ui_state.selected_party_member_id.and_then(|character_id| {
+                    party_info
+                        .members
+                        .iter()
+                        .find(|member| member.get_character_id() == character_id)
+                })
             {
                 if player.character_info.unique_id != selected_party_member.get_character_id() {
                     if response_kick_button.as_ref().map_or(false, |x| x.clicked()) {
@@ -435,5 +606,124 @@ pub fn ui_party_system(
         if let Some(button) = response_option_button {
             button.on_hover_text("Party Options");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_party_display_rows, compute_hp_percent, compute_party_member_hp_percent,
+        PartyDisplayRow, PARTY_INVITE_BUTTON_HEIGHT, PARTY_INVITE_BUTTON_WIDTH,
+    };
+    use rose_game_common::{
+        components::{HealthPoints, Stamina},
+        messages::{
+            server::{PartyMemberInfo, PartyMemberInfoOffline, PartyMemberInfoOnline},
+            ClientEntityId,
+        },
+    };
+
+    use crate::components::PartyOwner;
+
+    fn make_member(hp: i32, max_hp: i32) -> PartyMemberInfoOnline {
+        PartyMemberInfoOnline {
+            character_id: 1,
+            name: "test".to_string(),
+            entity_id: ClientEntityId(1),
+            health_points: HealthPoints::new(hp),
+            status_effects: Default::default(),
+            max_health: max_hp,
+            concentration: 0,
+            health_recovery: 0,
+            mana_recovery: 0,
+            stamina: Stamina::default(),
+        }
+    }
+
+    fn make_party_member(character_id: u32, name: &str) -> PartyMemberInfo {
+        PartyMemberInfo::Offline(PartyMemberInfoOffline {
+            character_id,
+            name: name.to_string(),
+        })
+    }
+
+    fn row_character_ids(rows: &[PartyDisplayRow]) -> Vec<u32> {
+        rows.iter()
+            .map(|row| match row {
+                PartyDisplayRow::Player => 99,
+                PartyDisplayRow::Member(member) => member.get_character_id(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn hp_percent_uses_party_snapshot_when_max_health_valid() {
+        let member_info = make_member(33, 100);
+        let hp_percent = compute_party_member_hp_percent(&member_info, Some((1, 10)));
+        assert!((hp_percent - 0.33).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn hp_percent_falls_back_when_party_max_health_invalid() {
+        let member_info = make_member(33, 0);
+        let hp_percent = compute_party_member_hp_percent(&member_info, Some((25, 50)));
+        assert!((hp_percent - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn hp_percent_clamps_range() {
+        let member_info = make_member(250, 100);
+        let hp_percent = compute_party_member_hp_percent(&member_info, None);
+        assert!((hp_percent - 1.0).abs() < f32::EPSILON);
+
+        let member_info = make_member(-10, 100);
+        let hp_percent = compute_party_member_hp_percent(&member_info, None);
+        assert!((hp_percent - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn local_hp_percent_uses_live_player_stats() {
+        let hp_percent = compute_hp_percent(45, 90);
+        assert!((hp_percent - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn invite_buttons_use_larger_dimensions() {
+        assert!(PARTY_INVITE_BUTTON_WIDTH >= 120.0);
+        assert!(PARTY_INVITE_BUTTON_HEIGHT >= 36.0);
+    }
+
+    #[test]
+    fn display_rows_put_player_first_when_player_is_owner() {
+        let members = vec![
+            make_party_member(10, "member_a"),
+            make_party_member(11, "member_b"),
+        ];
+        let rows = build_party_display_rows(&PartyOwner::Player, &members);
+
+        assert_eq!(row_character_ids(&rows), vec![99, 10, 11]);
+    }
+
+    #[test]
+    fn display_rows_put_player_after_owner_when_joining_party() {
+        let members = vec![
+            make_party_member(10, "leader"),
+            make_party_member(11, "member_a"),
+            make_party_member(12, "member_b"),
+        ];
+        let rows = build_party_display_rows(&PartyOwner::Character(10), &members);
+
+        assert_eq!(row_character_ids(&rows), vec![10, 99, 11, 12]);
+    }
+
+    #[test]
+    fn display_rows_fall_back_to_front_when_owner_missing() {
+        let members = vec![
+            make_party_member(10, "member_a"),
+            make_party_member(11, "member_b"),
+        ];
+        let rows = build_party_display_rows(&PartyOwner::Character(77), &members);
+
+        assert_eq!(row_character_ids(&rows), vec![99, 10, 11]);
     }
 }

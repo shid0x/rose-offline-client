@@ -490,12 +490,14 @@ pub fn ui_npc_store_system(
     if let (Some(player), Some(npc)) = (player.as_ref(), npc.as_ref()) {
         if player.position.position.xy().distance(npc.position.xy()) > 600.0 {
             ui_state.owner_entity = None;
+            ui_state_dnd.pending_sell_item_slots.clear();
             return;
         }
     }
 
     let npc_data = npc.and_then(|npc| game_data.npcs.get_npc(npc.npc.id));
     if npc_data.is_none() {
+        ui_state_dnd.pending_sell_item_slots.clear();
         return;
     }
     let npc_data = npc_data.unwrap();
@@ -703,5 +705,12 @@ pub fn ui_npc_store_system(
         || response_cancel.map_or(false, |x| x.clicked())
     {
         ui_state.owner_entity = None;
+        ui_state_dnd.pending_sell_item_slots.clear();
+    }
+
+    // Sync the shared pending sell item slots with the current sell list
+    ui_state_dnd.pending_sell_item_slots.clear();
+    for pending in ui_state.sell_list.iter().flatten() {
+        ui_state_dnd.pending_sell_item_slots.push(pending.item_slot);
     }
 }

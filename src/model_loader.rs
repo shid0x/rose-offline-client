@@ -25,11 +25,13 @@ use rose_game_common::components::{
 use crate::{
     animation::ZmoAsset,
     components::{
-        CharacterModel, CharacterModelPart, CharacterModelPartIndex, DummyBoneOffset,
-        ItemDropModel, NpcModel, PersonalStoreModel, VehicleModel,
+        BaseObjectMaterialAlpha, CharacterModel, CharacterModelPart, CharacterModelPartIndex,
+        DummyBoneOffset, ItemDropModel, NpcModel, PersonalStoreModel, VehicleModel,
     },
     effect_loader::spawn_effect,
-    render::{EffectMeshMaterial, ObjectMaterial, ParticleMaterial, TrailEffect},
+    render::{
+        EffectMeshMaterial, ObjectMaterial, ObjectMaterialGlow, ParticleMaterial, TrailEffect,
+    },
     zms_asset_loader::ZmsMaterialNumFaces,
 };
 
@@ -107,8 +109,8 @@ impl ModelLoader {
     ) -> Result<ModelLoader, anyhow::Error> {
         // Pre-load vehicle skeletons and compute their heights
         let skeleton_cart = vfs.read_file::<ZmdFile, _>("3DDATA/PAT/CART/CART01.ZMD")?;
-        let skeleton_castle_gear = vfs
-            .read_file::<ZmdFile, _>("3DDATA/PAT/CASTLEGEAR/CASTLEGEAR02/CASTLEGEAR02.ZMD")?;
+        let skeleton_castle_gear =
+            vfs.read_file::<ZmdFile, _>("3DDATA/PAT/CASTLEGEAR/CASTLEGEAR02/CASTLEGEAR02.ZMD")?;
         let cart_driver_seat_height = compute_driver_seat_height(&skeleton_cart);
         let castle_gear_driver_seat_height = compute_driver_seat_height(&skeleton_castle_gear);
 
@@ -261,6 +263,7 @@ impl ModelLoader {
                 dummy_bone_offset,
                 false,
                 &self.specular_image,
+                None,
             );
             model_parts.append(&mut parts);
         }
@@ -302,6 +305,7 @@ impl ModelLoader {
                     dummy_bone_offset,
                     false,
                     &self.specular_image,
+                    None,
                 );
                 model_parts.append(&mut parts);
             }
@@ -319,6 +323,7 @@ impl ModelLoader {
                     dummy_bone_offset,
                     false,
                     &self.specular_image,
+                    None,
                 );
                 model_parts.append(&mut parts);
             }
@@ -376,6 +381,7 @@ impl ModelLoader {
             0,
             false,
             &self.specular_image,
+            None,
         );
 
         PersonalStoreModel {
@@ -429,6 +435,7 @@ impl ModelLoader {
                     0,
                     false,
                     &self.specular_image,
+                    None,
                 ),
             },
             asset_server.load(&self.field_item_motion_path),
@@ -757,6 +764,30 @@ impl ModelLoader {
     ) -> Vec<Entity> {
         let model_list = self.get_model_list(character_info.gender, model_part);
 
+        let glow_color = match model_part {
+            CharacterModelPart::Head => equipment.get_equipment_item(EquipmentIndex::Head),
+            CharacterModelPart::FaceItem => equipment.get_equipment_item(EquipmentIndex::Face),
+            CharacterModelPart::Body => equipment.get_equipment_item(EquipmentIndex::Body),
+            CharacterModelPart::Hands => equipment.get_equipment_item(EquipmentIndex::Hands),
+            CharacterModelPart::Feet => equipment.get_equipment_item(EquipmentIndex::Feet),
+            CharacterModelPart::Back => equipment.get_equipment_item(EquipmentIndex::Back),
+            CharacterModelPart::Weapon => equipment.get_equipment_item(EquipmentIndex::Weapon),
+            CharacterModelPart::SubWeapon => {
+                equipment.get_equipment_item(EquipmentIndex::SubWeapon)
+            }
+            _ => None,
+        }
+        .filter(|item| item.grade > 0)
+        .and_then(|item| self.item_database.get_item_grade(item.grade))
+        .map(|grade_data| {
+            Vec3::new(
+                grade_data.glow_colour.0,
+                grade_data.glow_colour.1,
+                grade_data.glow_colour.2,
+            )
+        })
+        .filter(|c| c.x > 0.0 || c.y > 0.0 || c.z > 0.0);
+
         let mut model_parts = spawn_model(
             commands,
             asset_server,
@@ -769,6 +800,7 @@ impl ModelLoader {
             dummy_bone_offset,
             matches!(model_part, CharacterModelPart::CharacterFace),
             &self.specular_image,
+            glow_color,
         );
 
         if matches!(model_part, CharacterModelPart::Weapon) {
@@ -996,6 +1028,7 @@ impl ModelLoader {
                         dummy_bone_offset,
                         false,
                         &self.specular_image,
+                        None,
                     ),
                 );
 
@@ -1152,7 +1185,8 @@ fn compute_driver_seat_height(skeleton: &ZmdFile) -> f32 {
 
     // Compute world-space transform for the first dummy bone (driver seat)
     // Match the same multiplication order as spawn_skeleton: dummy_local * parent_world
-    let driver_seat_world = bind_pose[dummy_bone_offset] * bind_pose[skeleton.dummy_bones[0].parent as usize];
+    let driver_seat_world =
+        bind_pose[dummy_bone_offset] * bind_pose[skeleton.dummy_bones[0].parent as usize];
 
     driver_seat_world.translation.y.max(0.0)
 }
@@ -1253,6 +1287,7 @@ fn spawn_model(
     dummy_bone_offset: usize,
     load_clip_faces: bool,
     specular_image: &Handle<Image>,
+    glow_color: Option<Vec3>,
 ) -> Vec<Entity> {
     let mut parts = Vec::new();
     let object = if let Some(object) = model_list.objects.get(model_id) {
@@ -1285,12 +1320,14 @@ fn spawn_model(
                 None
             },
             skinned: zsc_material.is_skin,
+            glow: glow_color.map(ObjectMaterialGlow::Simple),
             ..Default::default()
         });
 
         let mut entity_commands = commands.spawn((
             mesh,
             material,
+            BaseObjectMaterialAlpha::new(zsc_material.alpha),
             Transform::default(),
             GlobalTransform::default(),
             Visibility::default(),

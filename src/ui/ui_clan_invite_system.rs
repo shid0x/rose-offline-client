@@ -45,11 +45,23 @@ pub fn ui_clan_invite_system(
                         let spacing = 16.0;
                         let offset = (total_width - button_width * 2.0 - spacing) / 2.0;
                         ui.add_space(offset);
-                        if ui.add_sized([button_width, 28.0], egui::Button::new(egui::RichText::new("Accept").size(15.0))).clicked() {
+                        if ui
+                            .add_sized(
+                                [button_width, 28.0],
+                                egui::Button::new(egui::RichText::new("Accept").size(15.0)),
+                            )
+                            .clicked()
+                        {
                             accepted = true;
                         }
                         ui.add_space(spacing);
-                        if ui.add_sized([button_width, 28.0], egui::Button::new(egui::RichText::new("Reject").size(15.0))).clicked() {
+                        if ui
+                            .add_sized(
+                                [button_width, 28.0],
+                                egui::Button::new(egui::RichText::new("Reject").size(15.0)),
+                            )
+                            .clicked()
+                        {
                             rejected = true;
                         }
                     });
@@ -65,7 +77,9 @@ pub fn ui_clan_invite_system(
             if let Some(game_connection) = &game_connection {
                 game_connection
                     .client_message_tx
-                    .send(ClientMessage::ClanAcceptInvite { inviter_name: inviter_name.clone() })
+                    .send(ClientMessage::ClanAcceptInvite {
+                        inviter_name: inviter_name.clone(),
+                    })
                     .ok();
             }
             pending_clan_invites.invites.remove(i);
@@ -74,7 +88,9 @@ pub fn ui_clan_invite_system(
             if let Some(game_connection) = &game_connection {
                 game_connection
                     .client_message_tx
-                    .send(ClientMessage::ClanRejectInvite { inviter_name: inviter_name.clone() })
+                    .send(ClientMessage::ClanRejectInvite {
+                        inviter_name: inviter_name.clone(),
+                    })
                     .ok();
             }
             pending_clan_invites.invites.remove(i);

@@ -22,7 +22,9 @@ enum ClanTab {
 #[derive(Clone)]
 enum ClanActionConfirm {
     Leave,
-    Expel { name: String },
+    Expel {
+        name: String,
+    },
     Promote {
         name: String,
         next_position_label: String,
@@ -271,12 +273,13 @@ fn draw_clan_info_tab(
             .show(ui, |ui| {
                 ui.add_sized(
                     [(slogan_panel_width - 16.0).max(0.0), 92.0],
-                    egui::Label::new(egui::RichText::new(slogan).color(value_color))
-                        .sense(if is_master {
+                    egui::Label::new(egui::RichText::new(slogan).color(value_color)).sense(
+                        if is_master {
                             egui::Sense::click()
                         } else {
                             egui::Sense::hover()
-                        }),
+                        },
+                    ),
                 )
             })
             .inner;
@@ -327,7 +330,9 @@ fn draw_clan_members_tab(
     if ui_state
         .selected_member_name
         .as_ref()
-        .map_or(false, |selected_name| clan.find_member(selected_name).is_none())
+        .map_or(false, |selected_name| {
+            clan.find_member(selected_name).is_none()
+        })
     {
         ui_state.selected_member_name = None;
     }
@@ -390,7 +395,10 @@ fn draw_clan_members_tab(
                     };
 
                     row.col(|ui| {
-                        ui.colored_label(status_color, if is_online { "Online" } else { "Offline" });
+                        ui.colored_label(
+                            status_color,
+                            if is_online { "Online" } else { "Offline" },
+                        );
                     });
                     row.col(|ui| {
                         let is_selected = ui_state
@@ -432,25 +440,26 @@ fn draw_clan_members_tab(
 
     let mut can_expel_selected = false;
     let mut expel_selected_name = String::new();
-    let expel_disabled_reason = if let Some(selected_member_name) =
-        ui_state.selected_member_name.as_ref()
-    {
-        let is_self = player_name.map_or(false, |name| selected_member_name == name);
-        if is_self {
-            "You cannot expel yourself."
-        } else if clan
-            .find_member(selected_member_name)
-            .map_or(false, |member| member.position == ClanMemberPosition::Master)
-        {
-            "You cannot expel the clan master."
+    let expel_disabled_reason =
+        if let Some(selected_member_name) = ui_state.selected_member_name.as_ref() {
+            let is_self = player_name.map_or(false, |name| selected_member_name == name);
+            if is_self {
+                "You cannot expel yourself."
+            } else if clan
+                .find_member(selected_member_name)
+                .map_or(false, |member| {
+                    member.position == ClanMemberPosition::Master
+                })
+            {
+                "You cannot expel the clan master."
+            } else {
+                can_expel_selected = true;
+                expel_selected_name = selected_member_name.clone();
+                ""
+            }
         } else {
-            can_expel_selected = true;
-            expel_selected_name = selected_member_name.clone();
-            ""
-        }
-    } else {
-        "Select a member first."
-    };
+            "Select a member first."
+        };
 
     let mut can_promote_selected = false;
     let mut promote_selected_name = String::new();
@@ -469,7 +478,10 @@ fn draw_clan_members_tab(
                 let target_rank = position_to_rank(selected_member.position);
                 if target_rank >= actor_rank {
                     "You can only promote members below your rank."
-                } else if target_rank.checked_add(1).map_or(true, |rank| rank >= actor_rank) {
+                } else if target_rank
+                    .checked_add(1)
+                    .map_or(true, |rank| rank >= actor_rank)
+                {
                     "You cannot promote a member to your rank."
                 } else if let Some(next_position) =
                     next_promoted_position(clan_membership.position, selected_member.position)
@@ -492,39 +504,38 @@ fn draw_clan_members_tab(
     let mut can_demote_selected = false;
     let mut demote_selected_name = String::new();
     let mut demote_target_position_label = String::new();
-    let demote_disabled_reason = if let Some(selected_member_name) =
-        ui_state.selected_member_name.as_ref()
-    {
-        let is_self = player_name.map_or(false, |name| selected_member_name == name);
-        if is_self {
-            "You cannot demote yourself."
-        } else if let Some(selected_member) = clan.find_member(selected_member_name) {
-            if !can_manage_members {
-                "Only clan master and deputy master can demote members."
-            } else {
-                let actor_rank = position_to_rank(clan_membership.position);
-                let target_rank = position_to_rank(selected_member.position);
-                if target_rank >= actor_rank {
-                    "You can only demote members below your rank."
-                } else if target_rank == 0 {
-                    "Selected member is already at the lowest rank."
-                } else if let Some(next_position) =
-                    next_demoted_position(clan_membership.position, selected_member.position)
-                {
-                    can_demote_selected = true;
-                    demote_selected_name = selected_member_name.clone();
-                    demote_target_position_label = clan_position_name(game_data, next_position);
-                    ""
+    let demote_disabled_reason =
+        if let Some(selected_member_name) = ui_state.selected_member_name.as_ref() {
+            let is_self = player_name.map_or(false, |name| selected_member_name == name);
+            if is_self {
+                "You cannot demote yourself."
+            } else if let Some(selected_member) = clan.find_member(selected_member_name) {
+                if !can_manage_members {
+                    "Only clan master and deputy master can demote members."
                 } else {
-                    "Selected member cannot be demoted."
+                    let actor_rank = position_to_rank(clan_membership.position);
+                    let target_rank = position_to_rank(selected_member.position);
+                    if target_rank >= actor_rank {
+                        "You can only demote members below your rank."
+                    } else if target_rank == 0 {
+                        "Selected member is already at the lowest rank."
+                    } else if let Some(next_position) =
+                        next_demoted_position(clan_membership.position, selected_member.position)
+                    {
+                        can_demote_selected = true;
+                        demote_selected_name = selected_member_name.clone();
+                        demote_target_position_label = clan_position_name(game_data, next_position);
+                        ""
+                    } else {
+                        "Selected member cannot be demoted."
+                    }
                 }
+            } else {
+                "Selected member is no longer in this clan."
             }
         } else {
-            "Selected member is no longer in this clan."
-        }
-    } else {
-        "Select a member first."
-    };
+            "Select a member first."
+        };
 
     ui.horizontal(|ui| {
         ui.label(format!("Members: {} / {}", clan.members.len(), max_members));
@@ -565,10 +576,8 @@ fn draw_clan_members_tab(
                     });
                 }
 
-                let mut invite_response = ui.add_enabled(
-                    invite_target_name.is_some(),
-                    egui::Button::new("Invite"),
-                );
+                let mut invite_response =
+                    ui.add_enabled(invite_target_name.is_some(), egui::Button::new("Invite"));
                 if invite_target_name.is_none() {
                     invite_response = invite_response.on_hover_text(&invite_invalid_reason);
                 }
@@ -695,8 +704,10 @@ pub fn ui_clan_system(
     let clan_result = query_clan.get_single();
 
     for event in clan_dialog_events.iter() {
-        if matches!(event, ClanDialogEvent::Open) && clan_result.is_ok() {
-            ui_state_windows.clan_open = true;
+        if let ClanDialogEvent::Open { .. } = event {
+            if clan_result.is_ok() {
+                ui_state_windows.clan_open = true;
+            }
         }
     }
 
@@ -710,7 +721,9 @@ pub fn ui_clan_system(
 
     let just_opened = ui_state_windows.clan_open && !ui_state.was_open;
     let min_window_size = egui::vec2(680.0, 420.0);
-    let default_window_size = ui_state.last_window_size.unwrap_or(egui::vec2(820.0, 560.0));
+    let default_window_size = ui_state
+        .last_window_size
+        .unwrap_or(egui::vec2(820.0, 560.0));
     let screen_rect = egui_context.ctx_mut().screen_rect();
     let centered_pos = egui::pos2(
         screen_rect.center().x - default_window_size.x * 0.5,
@@ -725,76 +738,77 @@ pub fn ui_clan_system(
         .default_pos(centered_pos)
         .min_width(min_window_size.x)
         .min_height(min_window_size.y)
-        .frame(egui::Frame::none()
-            .fill(egui::Color32::from_rgba_unmultiplied(10, 10, 10, 235))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(82, 82, 82)))
-            .inner_margin(egui::Margin::same(8.0)));
+        .frame(
+            egui::Frame::none()
+                .fill(egui::Color32::from_rgba_unmultiplied(10, 10, 10, 235))
+                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(82, 82, 82)))
+                .inner_margin(egui::Margin::same(8.0)),
+        );
 
     if just_opened && !ui_state.has_centered_once {
         window = window.current_pos(centered_pos);
     }
 
     let window_response = window.show(egui_context.ctx_mut(), |ui| {
-            ui.horizontal(|ui| {
-                if draw_tab_button(ui, "Clan Info", ui_state.active_tab == ClanTab::Info).clicked() {
-                    ui_state.active_tab = ClanTab::Info;
-                }
-                if draw_tab_button(ui, "Members", ui_state.active_tab == ClanTab::Members).clicked()
-                {
-                    ui_state.active_tab = ClanTab::Members;
+        ui.horizontal(|ui| {
+            if draw_tab_button(ui, "Clan Info", ui_state.active_tab == ClanTab::Info).clicked() {
+                ui_state.active_tab = ClanTab::Info;
+            }
+            if draw_tab_button(ui, "Members", ui_state.active_tab == ClanTab::Members).clicked() {
+                ui_state.active_tab = ClanTab::Members;
+            }
+        });
+
+        ui.add_space(8.0);
+        egui::Frame::none()
+            .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 110))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(62, 62, 62)))
+            .inner_margin(egui::Margin::same(10.0))
+            .show(ui, |ui| match clan_result {
+                Ok((clan, clan_membership)) => match ui_state.active_tab {
+                    ClanTab::Info => draw_clan_info_tab(
+                        ui,
+                        clan,
+                        clan_membership,
+                        &game_data,
+                        &mut ui_state,
+                        game_connection.as_deref(),
+                    ),
+                    ClanTab::Members => draw_clan_members_tab(
+                        ui,
+                        clan,
+                        clan_membership,
+                        &game_data,
+                        &mut ui_state,
+                        game_connection.as_deref(),
+                        &selected_target,
+                        &query_selected_target,
+                        query_player_entity.get_single().ok(),
+                        query_player_name
+                            .get_single()
+                            .ok()
+                            .map(|name| name.name.as_str()),
+                    ),
+                },
+                Err(_) => {
+                    ui_state.is_editing_slogan = false;
+                    ui_state.slogan_edit_buffer.clear();
+                    ui_state.selected_member_name = None;
+                    ui_state.pending_action_confirm = None;
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new("You are not in a clan.")
+                                .size(16.0)
+                                .color(egui::Color32::from_rgb(202, 202, 202)),
+                        );
+                    });
                 }
             });
 
-            ui.add_space(8.0);
-            egui::Frame::none()
-                .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 110))
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(62, 62, 62)))
-                .inner_margin(egui::Margin::same(10.0))
-                .show(ui, |ui| match clan_result {
-                    Ok((clan, clan_membership)) => match ui_state.active_tab {
-                        ClanTab::Info => draw_clan_info_tab(
-                            ui,
-                            clan,
-                            clan_membership,
-                            &game_data,
-                            &mut ui_state,
-                            game_connection.as_deref(),
-                        ),
-                        ClanTab::Members => draw_clan_members_tab(
-                            ui,
-                            clan,
-                            clan_membership,
-                            &game_data,
-                            &mut ui_state,
-                            game_connection.as_deref(),
-                            &selected_target,
-                            &query_selected_target,
-                            query_player_entity.get_single().ok(),
-                            query_player_name.get_single().ok().map(|name| name.name.as_str()),
-                        ),
-                    },
-                    Err(_) => {
-                        ui_state.is_editing_slogan = false;
-                        ui_state.slogan_edit_buffer.clear();
-                        ui_state.selected_member_name = None;
-                        ui_state.pending_action_confirm = None;
-                        ui.with_layout(
-                            egui::Layout::top_down(egui::Align::Center),
-                            |ui| {
-                                ui.label(
-                                    egui::RichText::new("You are not in a clan.")
-                                        .size(16.0)
-                                        .color(egui::Color32::from_rgb(202, 202, 202)),
-                                );
-                            },
-                        );
-                    }
-                });
-
-            // Keep a small free area near the resize handle so content widgets
-            // (especially table/scroll regions) don't steal drag interactions.
-            ui.add_space(8.0);
-        });
+        // Keep a small free area near the resize handle so content widgets
+        // (especially table/scroll regions) don't steal drag interactions.
+        ui.add_space(8.0);
+    });
 
     if ui_state_windows.clan_open {
         draw_clan_action_confirm_dialog(

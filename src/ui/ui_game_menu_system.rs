@@ -131,7 +131,7 @@ pub fn ui_game_menu_system(
     }
 
     if response_button_community.map_or(false, |r| r.clicked()) {
-        // TODO: Community dialog
+        ui_state_windows.community_open = !ui_state_windows.community_open;
         ui_state_windows.menu_open = false;
     }
 
@@ -158,7 +158,7 @@ pub fn ui_game_menu_system(
     if !egui_context.ctx_mut().wants_keyboard_input() {
         egui_context.ctx_mut().input_mut(|input| {
             if input.consume_key(egui::Modifiers::ALT, egui::Key::A) {
-                ui_state_windows.character_info_open = !ui_state_windows.character_info_open;
+                ui_state_windows.community_open = !ui_state_windows.community_open;
             }
 
             if input.consume_key(egui::Modifiers::ALT, egui::Key::I)

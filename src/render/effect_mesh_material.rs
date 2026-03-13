@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use bevy::{
     asset::{load_internal_asset, Handle},
     ecs::{
@@ -90,6 +92,7 @@ bitflags::bitflags! {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Copy, Clone, Default, Component, ShaderType, Reflect)]
 pub struct EffectMeshAnimationRenderState {
     pub flags: u32,
@@ -108,6 +111,7 @@ impl ExtractComponent for EffectMeshAnimationRenderState {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, ShaderType)]
 pub struct EffectMeshMaterialUniformData {
     pub flags: u32,

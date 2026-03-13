@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use bevy::{
     asset::load_internal_asset,
     ecs::{
@@ -130,6 +132,7 @@ impl Default for ZoneLighting {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, ShaderType, Resource)]
 pub struct ZoneLightingUniformData {
     pub map_ambient_color: Vec4,

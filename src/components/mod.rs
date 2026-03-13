@@ -29,6 +29,8 @@ mod player_character;
 mod position;
 mod projectile;
 mod sound_category;
+mod stealth;
+mod summon_points;
 mod vehicle;
 mod vehicle_model;
 mod vehicle_sound;
@@ -46,11 +48,11 @@ pub use client_entity::{ClientEntity, ClientEntityId, ClientEntityType};
 pub use client_entity_name::ClientEntityName;
 pub use collision::{
     ColliderEntity, ColliderParent, CollisionHeightOnly, CollisionPlayer, RemoveColliderCommand,
-    COLLISION_FILTER_CLICKABLE, COLLISION_FILTER_COLLIDABLE, COLLISION_FILTER_INSPECTABLE,
-    COLLISION_FILTER_MOVEABLE, COLLISION_GROUP_CHARACTER, COLLISION_GROUP_ITEM_DROP,
-    COLLISION_GROUP_NPC, COLLISION_GROUP_PHYSICS_TOY, COLLISION_GROUP_PLAYER,
-    COLLISION_GROUP_ZONE_EVENT_OBJECT, COLLISION_GROUP_ZONE_OBJECT, COLLISION_GROUP_ZONE_TERRAIN,
-    COLLISION_GROUP_ZONE_WARP_OBJECT, COLLISION_GROUP_ZONE_WATER,
+    COLLISION_FILTER_CLICKABLE, COLLISION_FILTER_COLLIDABLE, COLLISION_FILTER_GROUND_SUPPORT,
+    COLLISION_FILTER_INSPECTABLE, COLLISION_FILTER_MOVEABLE, COLLISION_GROUP_CHARACTER,
+    COLLISION_GROUP_ITEM_DROP, COLLISION_GROUP_NPC, COLLISION_GROUP_PHYSICS_TOY,
+    COLLISION_GROUP_PLAYER, COLLISION_GROUP_ZONE_EVENT_OBJECT, COLLISION_GROUP_ZONE_OBJECT,
+    COLLISION_GROUP_ZONE_TERRAIN, COLLISION_GROUP_ZONE_WARP_OBJECT, COLLISION_GROUP_ZONE_WATER,
 };
 pub use command::{
     Command, CommandAttack, CommandCastSkill, CommandCastSkillState, CommandCastSkillTarget,
@@ -83,6 +85,8 @@ pub use player_character::PlayerCharacter;
 pub use position::Position;
 pub use projectile::{Projectile, ProjectileParabola, ProjectileTarget};
 pub use sound_category::SoundCategory;
+pub use stealth::BaseObjectMaterialAlpha;
+pub use summon_points::SummonPoints;
 pub use vehicle::Vehicle;
 pub use vehicle_model::VehicleModel;
 pub use vehicle_sound::{VehicleSound, VehicleSoundState};

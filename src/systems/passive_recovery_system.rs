@@ -1,27 +1,30 @@
 use std::time::Duration;
 
-use bevy::prelude::{Query, Res, Time};
+use bevy::prelude::{Query, Res, Time, With};
 use rose_game_common::{
     components::{AbilityValues, HealthPoints, ManaPoints},
     data::PassiveRecoveryState,
 };
 
 use crate::{
-    components::{Command, Dead, PassiveRecoveryTime},
+    components::{Command, Dead, PassiveRecoveryTime, PlayerCharacter},
     resources::GameData,
 };
 
 const RECOVERY_INTERVAL: Duration = Duration::from_secs(4);
 
 pub fn passive_recovery_system(
-    mut query: Query<(
-        &mut PassiveRecoveryTime,
-        &AbilityValues,
-        &Command,
-        Option<&Dead>,
-        &mut HealthPoints,
-        &mut ManaPoints,
-    )>,
+    mut query: Query<
+        (
+            &mut PassiveRecoveryTime,
+            &AbilityValues,
+            &Command,
+            Option<&Dead>,
+            &mut HealthPoints,
+            &mut ManaPoints,
+        ),
+        With<PlayerCharacter>,
+    >,
     game_data: Res<GameData>,
     time: Res<Time>,
 ) {

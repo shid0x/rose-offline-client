@@ -23,6 +23,9 @@ const IID_RADIOBOX_EXP: i32 = 37;
 const IID_RADIOBUTTON_EXP_EQUALITY: i32 = 38;
 const IID_RADIOBUTTON_EXP_RATIO_LEVEL: i32 = 39;
 const IID_CHECKBOX_SHOW_PARTYMEMBER_HPGUAGE: i32 = 40;
+const PARTY_WINDOW_RIGHT_MARGIN: f32 = 24.0;
+const PARTY_WINDOW_GAP: f32 = 12.0;
+const PARTY_WINDOW_TOP_OFFSET: f32 = 300.0;
 
 pub struct UiStatePartyOptionSystem {
     item_sharing_rule: i32,
@@ -85,9 +88,20 @@ pub fn ui_party_option_system(
     let mut response_close_button = None;
     let mut response_confirm_button = None;
     let player_is_owner = matches!(party_info.owner, PartyOwner::Player);
+    let screen_size = egui_context
+        .ctx_mut()
+        .input(|input| input.screen_rect().size());
 
     egui::Window::new("Party Options")
-        .anchor(egui::Align2::RIGHT_CENTER, [-party_dialog.width, 0.0])
+        .default_pos(egui::pos2(
+            (screen_size.x
+                - party_dialog.width
+                - dialog.width
+                - PARTY_WINDOW_RIGHT_MARGIN
+                - PARTY_WINDOW_GAP)
+                .max(0.0),
+            PARTY_WINDOW_TOP_OFFSET,
+        ))
         .frame(egui::Frame::none())
         .title_bar(false)
         .resizable(false)

@@ -1,10 +1,11 @@
 use arrayvec::ArrayVec;
+use bevy::ecs::query::With;
 use bevy::{
     ecs::event::Events,
     math::{Quat, Vec3},
     prelude::{
-        Commands, ComputedVisibility, DespawnRecursiveExt, Entity, EventWriter, GlobalTransform,
-        Mut, NextState, Res, ResMut, State, Transform, Visibility, World,
+        AssetServer, Commands, ComputedVisibility, DespawnRecursiveExt, Entity, EventWriter,
+        GlobalTransform, Mut, NextState, Query, Res, ResMut, State, Transform, Visibility, World,
     },
 };
 
@@ -12,19 +13,20 @@ use rose_data::{
     AbilityType, EquipmentItem, Item, ItemReference, ItemSlotBehaviour, ItemType, SkillCooldown,
     StatusEffectType,
 };
+use rose_file_readers::VfsPathBuf;
 use rose_game_common::{
     components::{
         AbilityValues, BasicStatType, BasicStats, CharacterInfo, ClanPoints, DroppedItem,
         Equipment, ExperiencePoints, HealthPoints, Hotbar, Inventory, ItemDrop, ItemSlot, Level,
-        ManaPoints, Money, MoveMode, MoveSpeed, Npc, QuestState, SkillList, Stamina, StatPoints,
-        StatusEffects, StatusEffectsRegen,
+        ManaPoints, Money, MoveMode, MoveSpeed, Npc, QuestState, RecoveryRateBonus, SkillList,
+        Stamina, StatPoints, StatusEffects, StatusEffectsRegen,
     },
     messages::{
         client::ClientMessage,
         server::{
-            ClanCreateError, LearnSkillError, LevelUpSkillError, PartyMemberInfo,
-            PartyMemberInfoOffline, PersonalStoreTransactionStatus, PickupItemDropError,
-            ServerMessage, SpawnCommandState,
+            ClanCreateError, ClanUpgradeResult, LearnSkillError, LevelUpSkillError,
+            PartyMemberInfo, PartyMemberInfoOffline, PersonalStoreTransactionStatus,
+            PickupItemDropError, ServerMessage, SpawnCommandState,
         },
         PartyItemSharing, PartyXpSharing,
     },
@@ -32,24 +34,77 @@ use rose_game_common::{
 use rose_network_common::ConnectionError;
 
 use crate::{
+    audio::SpatialSound,
     bundles::{ability_values_add_value_exclusive, ability_values_set_value_exclusive},
     components::{
         Bank, Clan, ClanMember, ClanMembership, ClientEntity, ClientEntityName, ClientEntityType,
         CollisionHeightOnly, CollisionPlayer, Command, CommandCastSkillTarget, Cooldowns, Dead,
         FacingDirection, NextCommand, PartyInfo, PartyOwner, PassiveRecoveryTime, PendingDamage,
         PendingDamageList, PendingSkillEffect, PendingSkillEffectList, PendingSkillTarget,
-        PendingSkillTargetList, PersonalStore, PlayerCharacter, Position, VisibleStatusEffects,
+        PendingSkillTargetList, PersonalStore, PlayerCharacter, Position, SoundCategory,
+        SummonPoints, VisibleStatusEffects,
     },
     events::{
-        BankEvent, ChatboxEvent, ClientEntityEvent, GameConnectionEvent,
+        BankEvent, ChatboxEvent, ClientEntityEvent, CraftEvent, GameConnectionEvent, HitEvent,
         LoadZoneEvent, MessageBoxEvent, PartyEvent, PersonalStoreEvent, QuestTriggerEvent,
-        UseItemEvent,
+        SkillHitSoundEvent, SpawnEffectData, SpawnEffectEvent, UseItemEvent, WorldChatBubbleEvent,
     },
     resources::{
-        AppState, ClientEntityList, GameConnection, GameData, PendingClanInvites, WorldConnection,
-        WorldRates, WorldTime,
+        AppState, ClientEntityList, GameConnection, GameData, PendingClanInvites, SocialState,
+        SoundCache, SoundSettings, WorldConnection, WorldRates, WorldTime,
     },
 };
+
+const BONFIRE_BASE_SKILL_ID: u16 = 1161;
+
+fn party_level_up_event(player_entity: Entity, is_level_up: bool) -> Option<ClientEntityEvent> {
+    is_level_up.then_some(ClientEntityEvent::PartyLevelUp(player_entity))
+}
+
+fn queue_bonfire_cast_sound(
+    commands: &mut Commands,
+    game_data: &GameData,
+    asset_server: &AssetServer,
+    sound_cache: &SoundCache,
+    sound_settings: &SoundSettings,
+    query_global_transform: &Query<&GlobalTransform>,
+    player_entity: Option<Entity>,
+    entity: Entity,
+    skill_id: rose_data::SkillId,
+) {
+    let Some(skill_data) = game_data.skills.get_skill(skill_id) else {
+        return;
+    };
+    if skill_data.base_skill_id.unwrap_or(skill_data.id).get() != BONFIRE_BASE_SKILL_ID {
+        return;
+    }
+
+    let Some(sound_data) = skill_data
+        .bullet_fire_sound_id
+        .and_then(|sound_id| game_data.sounds.get_sound(sound_id))
+    else {
+        return;
+    };
+
+    let Ok(global_transform) = query_global_transform.get(entity) else {
+        return;
+    };
+
+    let sound_category = if player_entity == Some(entity) {
+        SoundCategory::PlayerCombat
+    } else {
+        SoundCategory::OtherCombat
+    };
+    let translation = global_transform.translation();
+
+    commands.spawn((
+        sound_category,
+        sound_settings.gain(sound_category),
+        SpatialSound::new(sound_cache.load(sound_data, asset_server)),
+        Transform::from_translation(translation),
+        GlobalTransform::from_translation(translation),
+    ));
+}
 
 fn to_next_command(
     command_state: &SpawnCommandState,
@@ -144,6 +199,16 @@ fn clear_visible_character_clan_membership_by_name(world: &mut World, name: &str
     }
 }
 
+fn reward_money_diff(current_money: Money, new_total_money: Money) -> i64 {
+    new_total_money.0 - current_money.0
+}
+
+fn sync_reward_money(inventory: &mut Inventory, new_total_money: Money) -> i64 {
+    let diff = reward_money_diff(inventory.money, new_total_money);
+    inventory.money = new_total_money;
+    diff
+}
+
 pub fn game_connection_system(
     mut commands: Commands,
     game_connection: Option<Res<GameConnection>>,
@@ -156,14 +221,30 @@ pub fn game_connection_system(
     mut load_zone_events: EventWriter<LoadZoneEvent>,
     mut use_item_events: EventWriter<UseItemEvent>,
     mut client_entity_events: EventWriter<ClientEntityEvent>,
-    mut party_events: EventWriter<PartyEvent>,
-    mut personal_store_events: EventWriter<PersonalStoreEvent>,
-    mut quest_trigger_events: EventWriter<QuestTriggerEvent>,
-    mut message_box_events: EventWriter<MessageBoxEvent>,
-    (world_connection, mut pending_clan_invites): (
+    query_player_inventory: Query<&Inventory, With<PlayerCharacter>>,
+    (
+        mut party_events,
+        mut personal_store_events,
+        mut quest_trigger_events,
+        mut message_box_events,
+    ): (
+        EventWriter<PartyEvent>,
+        EventWriter<PersonalStoreEvent>,
+        EventWriter<QuestTriggerEvent>,
+        EventWriter<MessageBoxEvent>,
+    ),
+    (asset_server, sound_cache, sound_settings, query_global_transform): (
+        Res<AssetServer>,
+        Res<SoundCache>,
+        Res<SoundSettings>,
+        Query<&GlobalTransform>,
+    ),
+    (world_connection, mut pending_clan_invites, mut spawn_effect_events): (
         Option<Res<WorldConnection>>,
         ResMut<PendingClanInvites>,
+        EventWriter<SpawnEffectEvent>,
     ),
+    mut social_state: ResMut<SocialState>,
 ) {
     let Some(game_connection) = game_connection else {
         return;
@@ -173,6 +254,7 @@ pub fn game_connection_system(
         match game_connection.server_message_rx.try_recv() {
             Ok(ServerMessage::ConnectionRequestSuccess { .. }) =>{
             client_entity_list.clear();
+            social_state.clear();
             }
             Ok(ServerMessage::ConnectionRequestError { .. }) =>{
                 break Err(ConnectionError::ConnectionLost.into());
@@ -228,6 +310,8 @@ pub fn game_connection_system(
                             VisibleStatusEffects::default(),
                         ),
                         (
+                            RecoveryRateBonus::default(),
+                            SummonPoints::default(),
                             Transform::from_xyz(
                                 character_data.position.x / 100.0,
                                 character_data.position.z / 100.0 + 100.0,
@@ -257,7 +341,67 @@ pub fn game_connection_system(
                     commands.entity(player_entity).insert(*quest_state);
                 }
             }
-            Ok(ServerMessage::JoinZone { entity_id, experience_points, team, health_points, mana_points, world_ticks, craft_rate, world_price_rate, item_price_rate, town_price_rate }) => {
+            Ok(ServerMessage::FriendList { friends }) => {
+                social_state.friends = friends;
+            }
+            Ok(ServerMessage::FriendAddRequest { requester_id, name }) => {
+                if !social_state
+                    .pending_requests
+                    .iter()
+                    .any(|request| request.requester_id == requester_id)
+                {
+                    social_state.pending_requests.push(crate::resources::PendingFriendRequest {
+                        requester_id,
+                        name,
+                    });
+                }
+            }
+            Ok(ServerMessage::FriendAdded { friend }) => {
+                social_state.upsert_friend(friend);
+            }
+            Ok(ServerMessage::FriendAddRejected { name }) => {
+                message_box_events.send(MessageBoxEvent::Show {
+                    message: format!("{} rejected your friend request.", name),
+                    modal: false,
+                    ok: None,
+                    cancel: None,
+                });
+            }
+            Ok(ServerMessage::FriendAddTargetNotFound { name }) => {
+                message_box_events.send(MessageBoxEvent::Show {
+                    message: format!("{} is not online.", name),
+                    modal: false,
+                    ok: None,
+                    cancel: None,
+                });
+            }
+            Ok(ServerMessage::FriendRemoved { friend_id }) => {
+                social_state.remove_friend(friend_id);
+            }
+            Ok(ServerMessage::FriendStatusChanged { friend_id, status }) => {
+                if matches!(status, rose_game_common::messages::FriendStatus::Deleted) {
+                    social_state.remove_friend(friend_id);
+                } else {
+                    social_state.update_friend_status(friend_id, status);
+                }
+            }
+            Ok(ServerMessage::FriendChat {
+                friend_id,
+                from_name,
+                text,
+            }) => {
+                let sender_name = if from_name.is_empty() {
+                    social_state
+                        .get_friend(friend_id)
+                        .map(|friend| friend.name.clone())
+                        .unwrap_or_else(|| "Friend".to_string())
+                } else {
+                    from_name
+                };
+                social_state.append_chat_message(friend_id, sender_name, text, false);
+                social_state.request_open_chat(friend_id);
+            }
+            Ok(ServerMessage::JoinZone { entity_id, experience_points, team, global_flags: _, health_points, mana_points, world_ticks, craft_rate, world_price_rate, item_price_rate, town_price_rate }) => {
                 if let Some(player_entity) = client_entity_list.player_entity {
                     let mut entity_commands = commands.entity(player_entity);
                     entity_commands.insert((
@@ -408,6 +552,7 @@ pub fn game_connection_system(
                         level,
                         move_speed,
                         status_effects,
+                        StatusEffectsRegen::new(),
                     ), (
                         ClientEntity::new(entity_id, ClientEntityType::Npc),
                         CollisionHeightOnly,
@@ -494,6 +639,7 @@ pub fn game_connection_system(
                         level,
                         move_speed,
                         status_effects,
+                        StatusEffectsRegen::new(),
                     ),
                     (
                         ClientEntity::new(entity_id, ClientEntityType::Monster),
@@ -602,12 +748,83 @@ pub fn game_connection_system(
             }
             Ok(ServerMessage::DamageEntity { attacker_entity_id, defender_entity_id, damage, is_killed, is_immediate, from_skill }) => {
                 if let Some(defender_entity) = client_entity_list.get(defender_entity_id) {
-                    let attacker_entity =  client_entity_list.get(attacker_entity_id);
+                    let attacker_entity = client_entity_list.get(attacker_entity_id);
                     let killed_by_player = is_killed
                         && client_entity_list.player_entity
                             == client_entity_list.get(attacker_entity_id);
+                    let aoe_skill_id = if let Some((skill_id, _)) = from_skill.as_ref() {
+                        match game_data.skills.get_skill(*skill_id) {
+                            Some(skill_data) if skill_data.scope > 0 => Some(*skill_id),
+                            Some(_) => None,
+                            None => {
+                                log::warn!(
+                                    "Received skill damage for unknown skill id {}",
+                                    skill_id.get()
+                                );
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
 
                     commands.add(move |world: &mut World| {
+                        if let Some(skill_id) = aoe_skill_id {
+                            if let Some(attacker_entity) = attacker_entity {
+                                let explicit_target = if let Some(attacker) =
+                                    world.get_entity(attacker_entity)
+                                {
+                                    if let Some(command) = attacker.get::<Command>() {
+                                        command.get_target()
+                                    } else {
+                                        log::debug!(
+                                            "Missing command component for AOE attacker entity {:?}",
+                                            attacker_entity
+                                        );
+                                        None
+                                    }
+                                } else {
+                                    log::debug!(
+                                        "AOE attacker entity {:?} no longer exists locally",
+                                        attacker_entity
+                                    );
+                                    None
+                                };
+
+                                let is_primary_target = explicit_target == Some(defender_entity)
+                                    || defender_entity == attacker_entity;
+
+                                if !is_primary_target {
+                                    log::debug!(
+                                        "Emitting synthetic AOE hit feedback for skill {} attacker {:?} defender {:?}",
+                                        skill_id.get(),
+                                        attacker_entity,
+                                        defender_entity
+                                    );
+                                    world.resource_mut::<Events<HitEvent>>().send(
+                                        HitEvent::with_skill_damage(
+                                            attacker_entity,
+                                            defender_entity,
+                                            skill_id,
+                                        ),
+                                    );
+                                    world
+                                        .resource_mut::<Events<SkillHitSoundEvent>>()
+                                        .send(SkillHitSoundEvent::new(
+                                            attacker_entity,
+                                            defender_entity,
+                                            skill_id,
+                                        ));
+                                }
+                            } else {
+                                log::warn!(
+                                    "Unable to emit synthetic AOE hit feedback for skill {}: attacker entity id {:?} was not found on client",
+                                    skill_id.get(),
+                                    attacker_entity_id
+                                );
+                            }
+                        }
+
                         let mut defender = world.entity_mut(defender_entity);
                         if let Some(mut pending_damage_list) =
                             defender.get_mut::<PendingDamageList>()
@@ -673,9 +890,16 @@ pub fn game_connection_system(
                     commands.add(move |world: &mut World| {
                         if let Some(name) = world.entity(chat_entity).get::<ClientEntityName>() {
                             let name = name.to_string();
+                            world.resource_mut::<Events<ChatboxEvent>>().send(ChatboxEvent::Say(
+                                name,
+                                text.clone(),
+                            ));
                             world
-                                .resource_mut::<Events<ChatboxEvent>>()
-                                .send(ChatboxEvent::Say(name, text));
+                                .resource_mut::<Events<WorldChatBubbleEvent>>()
+                                .send(WorldChatBubbleEvent {
+                                    entity: chat_entity,
+                                    text,
+                                });
                         }
                     });
                 }
@@ -714,10 +938,12 @@ pub fn game_connection_system(
             }
             Ok(ServerMessage::UpdateAbilityValueSet { ability_type, value }) => {
                 if let Some(player_entity) = client_entity_list.player_entity {
-                    chatbox_events.send(ChatboxEvent::System(format!(
-                        "Ability {:?} has been changed to {}.",
-                        ability_type, value,
-                    )));
+                    if !matches!(ability_type, AbilityType::Health | AbilityType::Mana) {
+                        chatbox_events.send(ChatboxEvent::System(format!(
+                            "Ability {:?} has been changed to {}.",
+                            ability_type, value,
+                        )));
+                    }
 
                     commands.add(move |world: &mut World| {
                         let mut player = world.entity_mut(player_entity);
@@ -1032,6 +1258,24 @@ pub fn game_connection_system(
                         .insert(MoveSpeed::new(run_speed as f32));
                 }
             }
+            Ok(ServerMessage::UpdateSummonPoints {
+                used_points,
+                max_points,
+            }) => {
+                if let Some(player_entity) = client_entity_list.player_entity {
+                    commands.entity(player_entity).insert(SummonPoints {
+                        used_points,
+                        max_points,
+                    });
+                }
+            }
+            Ok(ServerMessage::UpdateRecoveryRates { hp_bonus, mp_bonus }) => {
+                if let Some(player_entity) = client_entity_list.player_entity {
+                    commands
+                        .entity(player_entity)
+                        .insert(RecoveryRateBonus::new(hp_bonus, mp_bonus));
+                }
+            }
             Ok(ServerMessage::UpdateStatusEffects { entity_id, status_effects: update_status_effects, updated_values }) => {
                 if let Some(entity) = client_entity_list.get(entity_id) {
                     commands.add(move |world: &mut World| {
@@ -1192,15 +1436,25 @@ pub fn game_connection_system(
             }
             Ok(ServerMessage::RewardMoney { money }) => {
                 if let Some(player_entity) = client_entity_list.player_entity {
-                    chatbox_events.send(ChatboxEvent::System(format!(
-                        "You have earned {} Zuly.",
-                        money.0
-                    )));
+                    if let Ok(inventory) = query_player_inventory.get_single() {
+                        let diff = reward_money_diff(inventory.money, money);
+                        if diff > 0 {
+                            chatbox_events.send(ChatboxEvent::System(format!(
+                                "You have earned {} Zuly.",
+                                diff
+                            )));
+                        } else if diff < 0 {
+                            chatbox_events.send(ChatboxEvent::System(format!(
+                                "You have lost {} Zuly.",
+                                -diff
+                            )));
+                        }
+                    }
 
                     commands.add(move |world: &mut World| {
                         let mut player = world.entity_mut(player_entity);
                         if let Some(mut inventory) = player.get_mut::<Inventory>() {
-                            inventory.try_add_money(money).ok();
+                            sync_reward_money(&mut inventory, money);
                         }
                     });
                 }
@@ -1397,6 +1651,17 @@ pub fn game_connection_system(
                         None,
                         None,
                     ));
+                    queue_bonfire_cast_sound(
+                        &mut commands,
+                        &game_data,
+                        &asset_server,
+                        &sound_cache,
+                        &sound_settings,
+                        &query_global_transform,
+                        client_entity_list.player_entity,
+                        entity,
+                        skill_id,
+                    );
 
                     if client_entity_list.player_entity == Some(entity) {
                         if let Some(skill_data) = game_data.skills.get_skill(skill_id) {
@@ -1435,6 +1700,17 @@ pub fn game_connection_system(
                             None,
                         ));
                     }
+                    queue_bonfire_cast_sound(
+                        &mut commands,
+                        &game_data,
+                        &asset_server,
+                        &sound_cache,
+                        &sound_settings,
+                        &query_global_transform,
+                        client_entity_list.player_entity,
+                        entity,
+                        skill_id,
+                    );
 
                     if client_entity_list.player_entity == Some(entity) {
                         if let Some(skill_data) = game_data.skills.get_skill(skill_id) {
@@ -1471,6 +1747,17 @@ pub fn game_connection_system(
                         None,
                         None,
                     ));
+                    queue_bonfire_cast_sound(
+                        &mut commands,
+                        &game_data,
+                        &asset_server,
+                        &sound_cache,
+                        &sound_settings,
+                        &query_global_transform,
+                        client_entity_list.player_entity,
+                        entity,
+                        skill_id,
+                    );
 
                     if client_entity_list.player_entity == Some(entity) {
                         if let Some(skill_data) = game_data.skills.get_skill(skill_id) {
@@ -1981,6 +2268,43 @@ pub fn game_connection_system(
                     });
                 }
             }
+            Ok(ServerMessage::PartyLevelXp { level, xp, is_level_up }) => {
+                if let Some(player_entity) = client_entity_list.player_entity {
+                    if let Some(event) = party_level_up_event(player_entity, is_level_up) {
+                        // Play level-up effect and sound on the player
+                        client_entity_events.send(event);
+
+                        // Restore player HP/MP to full and update party info
+                        commands.add(move |world: &mut World| {
+                            let mut player = world.entity_mut(player_entity);
+
+                            if let Some(mut party_info) = player.get_mut::<PartyInfo>() {
+                                party_info.level = level as i32;
+                                party_info.experience = xp as i32;
+                            }
+
+                            let max_hp = player.get::<AbilityValues>().map(|av| av.get_max_health());
+                            let max_mp = player.get::<AbilityValues>().map(|av| av.get_max_mana());
+
+                            if let (Some(max_hp), Some(mut health_points)) = (max_hp, player.get_mut::<HealthPoints>()) {
+                                health_points.hp = max_hp;
+                            }
+                            if let (Some(max_mp), Some(mut mana_points)) = (max_mp, player.get_mut::<ManaPoints>()) {
+                                mana_points.mp = max_mp;
+                            }
+                        });
+                    } else {
+                        commands.add(move |world: &mut World| {
+                            if let Some(mut party_info) =
+                                world.entity_mut(player_entity).get_mut::<PartyInfo>()
+                            {
+                                party_info.level = level as i32;
+                                party_info.experience = xp as i32;
+                            }
+                        });
+                    }
+                }
+            }
             Ok(ServerMessage::OpenPersonalStore {
                 entity_id,
                 skin,
@@ -2281,6 +2605,11 @@ pub fn game_connection_system(
                             clan.description = description;
                             clan.skills = skills;
                         }
+                        if let Some(mut clan_membership) = entity_mut.get_mut::<ClanMembership>() {
+                            clan_membership.clan_unique_id = id;
+                            clan_membership.mark = mark;
+                            clan_membership.level = level;
+                        }
                     });
                 }
             }
@@ -2336,6 +2665,29 @@ pub fn game_connection_system(
                         message_box_events.send(MessageBoxEvent::Show { message: game_data.client_strings.clan_create_error_condition.into(), modal: false, ok: None, cancel: None });
                     },
                 }
+            }
+            Ok(ServerMessage::ClanUpgradeResult { result }) => {
+                let message = match result {
+                    ClanUpgradeResult::Success => "Clan grade upgraded successfully.",
+                    ClanUpgradeResult::NoClan => "You are not in a clan.",
+                    ClanUpgradeResult::NoPermission => {
+                        "Only the clan master can upgrade the clan grade."
+                    }
+                    ClanUpgradeResult::InvalidNpc => {
+                        "That NPC cannot upgrade your clan grade."
+                    }
+                    ClanUpgradeResult::NpcTooFar => "You are too far away from the clan NPC.",
+                    ClanUpgradeResult::MaxLevel => "Your clan is already at the maximum grade.",
+                    ClanUpgradeResult::InsufficientPoints => {
+                        "Your clan does not have enough clan points."
+                    }
+                };
+                message_box_events.send(MessageBoxEvent::Show {
+                    message: message.into(),
+                    modal: false,
+                    ok: None,
+                    cancel: None,
+                });
             }
             Ok(ServerMessage::ClanMemberList { members }) =>  {
                 if let Some(player_entity) = client_entity_list.player_entity {
@@ -2425,11 +2777,107 @@ pub fn game_connection_system(
                     });
                 }
             }
-            Ok(ServerMessage::CraftInsertGem { .. }) => {
-                log::warn!("Received unimplemented ServerMessage::CraftInsertGem");
+            Ok(ServerMessage::CraftInsertGem { update_items }) => {
+                if let Some(player_entity) = client_entity_list.player_entity {
+                    commands.add(move |world: &mut World| {
+                        update_inventory_and_money(world, player_entity, update_items, None);
+                    });
+                }
             }
-            Ok(ServerMessage::CraftInsertGemError { .. }) => {
-                log::warn!("Received unimplemented ServerMessage::CraftInsertGemError");
+            Ok(ServerMessage::CraftInsertGemError { error }) => {
+                log::warn!("Gem insertion failed: {:?}", error);
+            }
+            Ok(ServerMessage::CraftCreateItemSuccess {
+                inventory_slot,
+                item,
+            }) => {
+                if let Some(player_entity) = client_entity_list.player_entity {
+                    let update_items = vec![(inventory_slot, Some(item))];
+                    commands.add(move |world: &mut World| {
+                        update_inventory_and_money(world, player_entity, update_items, None);
+                    });
+                    chatbox_events.send(ChatboxEvent::System("Crafting successful!".to_string()));
+                    spawn_effect_events.send(SpawnEffectEvent::OnEntity(
+                        player_entity,
+                        None,
+                        SpawnEffectData::with_path(VfsPathBuf::new(
+                            "3DDATA/EFFECT/_SUCCESS_01.EFT",
+                        )),
+                    ));
+                }
+            }
+            Ok(ServerMessage::CraftCreateItemError { error }) => {
+                let craft_failed = matches!(
+                    &error,
+                    rose_game_common::messages::server::CraftCreateItemError::Failed
+                );
+                let msg = match error {
+                    rose_game_common::messages::server::CraftCreateItemError::Failed => "Crafting failed.",
+                    rose_game_common::messages::server::CraftCreateItemError::InvalidCondition => "Crafting failed: invalid condition.",
+                    rose_game_common::messages::server::CraftCreateItemError::NeedItem => "Crafting failed: missing materials.",
+                    rose_game_common::messages::server::CraftCreateItemError::InvalidItem => "Crafting failed: invalid item.",
+                    rose_game_common::messages::server::CraftCreateItemError::NeedSkillLevel => "Crafting failed: insufficient skill level.",
+                };
+                chatbox_events.send(ChatboxEvent::System(msg.to_string()));
+                if craft_failed {
+                    if let Some(player_entity) = client_entity_list.player_entity {
+                        spawn_effect_events.send(SpawnEffectEvent::OnEntity(
+                            player_entity,
+                            None,
+                            SpawnEffectData::with_path(VfsPathBuf::new(
+                                "3DDATA/EFFECT/_FAILED_01.EFT",
+                            )),
+                        ));
+                    }
+                }
+            }
+            Ok(ServerMessage::CraftUpgradeSuccess { update_items }) => {
+                if let Some(player_entity) = client_entity_list.player_entity {
+                    commands.add(move |world: &mut World| {
+                        update_inventory_and_money(world, player_entity, update_items, None);
+                    });
+                    chatbox_events.send(ChatboxEvent::System("Upgrade successful!".to_string()));
+                    spawn_effect_events.send(SpawnEffectEvent::OnEntity(
+                        player_entity,
+                        None,
+                        SpawnEffectData::with_path(VfsPathBuf::new(
+                            "3DDATA/EFFECT/_SUCCESS_01.EFT",
+                        )),
+                    ));
+                }
+                commands.add(|world: &mut World| {
+                    world
+                        .resource_mut::<Events<CraftEvent>>()
+                        .send(CraftEvent::UpgradeCompleted);
+                });
+            }
+            Ok(ServerMessage::CraftUpgradeFailed { update_items }) => {
+                if let Some(player_entity) = client_entity_list.player_entity {
+                    commands.add(move |world: &mut World| {
+                        update_inventory_and_money(world, player_entity, update_items, None);
+                    });
+                    chatbox_events.send(ChatboxEvent::System("Upgrade failed!".to_string()));
+                    spawn_effect_events.send(SpawnEffectEvent::OnEntity(
+                        player_entity,
+                        None,
+                        SpawnEffectData::with_path(VfsPathBuf::new(
+                            "3DDATA/EFFECT/_FAILED_01.EFT",
+                        )),
+                    ));
+                }
+                commands.add(|world: &mut World| {
+                    world
+                        .resource_mut::<Events<CraftEvent>>()
+                        .send(CraftEvent::UpgradeCompleted);
+                });
+            }
+            Ok(ServerMessage::CraftDisassembleSuccess { update_items }) => {
+                if let Some(player_entity) = client_entity_list.player_entity {
+                    commands.add(move |world: &mut World| {
+                        update_inventory_and_money(world, player_entity, update_items, None);
+                    });
+                    chatbox_events.send(ChatboxEvent::System("Disassembly complete!".to_string()));
+                }
             }
             Ok(ServerMessage::RepairedItemUsingNpc { .. }) => {
                 log::warn!("Received unimplemented ServerMessage::RepairedItemUsingNpc");
@@ -2471,6 +2919,60 @@ pub fn game_connection_system(
     if let Err(error) = result {
         // TODO: Store error somewhere to display to user
         log::warn!("Game server connection error: {}", error);
+        social_state.clear();
         commands.remove_resource::<GameConnection>();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{party_level_up_event, reward_money_diff, sync_reward_money};
+    use crate::events::ClientEntityEvent;
+    use bevy::prelude::Entity;
+    use rose_game_common::components::{Inventory, Money};
+
+    #[test]
+    fn party_level_xp_level_up_emits_party_level_up_event() {
+        let player_entity = Entity::from_raw(7);
+        assert!(matches!(
+            party_level_up_event(player_entity, true),
+            Some(ClientEntityEvent::PartyLevelUp(entity)) if entity == player_entity
+        ));
+    }
+
+    #[test]
+    fn party_level_xp_without_level_up_emits_no_event() {
+        assert!(matches!(
+            party_level_up_event(Entity::from_raw(7), false),
+            None
+        ));
+    }
+
+    #[test]
+    fn reward_money_sync_replaces_money_when_total_decreases() {
+        let mut inventory = Inventory::default();
+        inventory.money = Money(10_000);
+
+        let diff = sync_reward_money(&mut inventory, Money(8_000));
+
+        assert_eq!(diff, -2_000);
+        assert_eq!(inventory.money, Money(8_000));
+    }
+
+    #[test]
+    fn reward_money_sync_replaces_money_when_total_increases() {
+        let mut inventory = Inventory::default();
+        inventory.money = Money(10_000);
+
+        let diff = sync_reward_money(&mut inventory, Money(12_000));
+
+        assert_eq!(diff, 2_000);
+        assert_eq!(inventory.money, Money(12_000));
+    }
+
+    #[test]
+    fn reward_money_diff_uses_absolute_totals() {
+        assert_eq!(reward_money_diff(Money(10_000), Money(8_000)), -2_000);
+        assert_eq!(reward_money_diff(Money(10_000), Money(12_000)), 2_000);
     }
 }

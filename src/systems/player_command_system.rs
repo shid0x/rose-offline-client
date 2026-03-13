@@ -22,7 +22,7 @@ use crate::{
     },
     events::{ChatboxEvent, PlayerCommandEvent},
     resources::{GameConnection, GameData, SelectedTarget},
-    ui::UiStateWindows,
+    ui::{UiDisassembleSource, UiStateWindows, UiUpgradeSource},
 };
 
 #[derive(WorldQuery)]
@@ -276,7 +276,27 @@ pub fn player_command_system(
                         }
 
                         SkillType::CreateWindow => {
-                            log::warn!("Unimplemented skill type: {:?}", skill_data.skill_type);
+                            // item_make_number determines which crafting window to open:
+                            // 11-39 = manufacture, 41 = disassemble, 42 = upgrade
+                            let make_number = skill_data.item_make_number;
+                            if (11..=39).contains(&make_number) {
+                                ui_state_windows.craft_manufacture_open = true;
+                                ui_state_windows.craft_manufacture_skill_slot = Some(skill_slot);
+                                ui_state_windows.craft_manufacture_make_number = Some(make_number);
+                            } else if make_number == 41 {
+                                ui_state_windows.craft_disassemble_open = true;
+                                ui_state_windows.craft_disassemble_source =
+                                    Some(UiDisassembleSource::Skill(skill_slot));
+                            } else if make_number == 42 {
+                                ui_state_windows.craft_upgrade_open = true;
+                                ui_state_windows.craft_upgrade_source =
+                                    Some(UiUpgradeSource::Skill(skill_slot));
+                            } else {
+                                log::warn!(
+                                    "Unknown CreateWindow item_make_number: {}",
+                                    make_number
+                                );
+                            }
                         }
 
                         SkillType::SelfBoundDuration
@@ -773,6 +793,17 @@ pub fn player_command_system(
                             })
                             .ok();
                     }
+                }
+            }
+            PlayerCommandEvent::InsertGem(equipment_index, item_slot) => {
+                if let Some(game_connection) = game_connection.as_ref() {
+                    game_connection
+                        .client_message_tx
+                        .send(ClientMessage::CraftInsertGem {
+                            equipment_index,
+                            item_slot,
+                        })
+                        .ok();
                 }
             }
             PlayerCommandEvent::UseHotbar(_, _) => {} // Handled above

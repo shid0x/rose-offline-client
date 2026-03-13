@@ -4,7 +4,8 @@ use rose_game_common::messages::client::ClientMessage;
 use crate::{
     events::QuestTriggerEvent,
     scripting::{
-        quest_apply_rewards, quest_check_conditions, ScriptFunctionContext, ScriptFunctionResources,
+        quest_apply_rewards, quest_check_conditions, quest_check_result_allows_trigger,
+        ScriptFunctionContext, ScriptFunctionResources,
     },
 };
 
@@ -19,9 +20,9 @@ pub fn quest_trigger_system(
                 quest_apply_rewards(&script_resources, &mut script_context, trigger_hash).ok();
             }
             QuestTriggerEvent::DoTrigger(trigger_hash) => {
-                if let Ok(true) =
-                    quest_check_conditions(&script_resources, &mut script_context, trigger_hash)
-                {
+                let check_result =
+                    quest_check_conditions(&script_resources, &mut script_context, trigger_hash);
+                if quest_check_result_allows_trigger(check_result) {
                     if let Some(game_connection) = script_resources.game_connection.as_ref() {
                         game_connection
                             .client_message_tx
@@ -30,6 +31,12 @@ pub fn quest_trigger_system(
                             })
                             .ok();
                     }
+                } else {
+                    log::debug!(
+                        target: "quest",
+                        "QuestTriggerEvent::DoTrigger blocked by precheck: {:?}",
+                        check_result
+                    );
                 }
             }
         }

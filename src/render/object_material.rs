@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use bevy::{
     asset::{load_internal_asset, Handle},
     ecs::{
@@ -160,10 +162,12 @@ bitflags::bitflags! {
         const ALPHA_MODE_BLEND           = (1 << 2);
         const HAS_ALPHA_VALUE            = (1 << 3);
         const SPECULAR                   = (1 << 4);
+        const HAS_GLOW                   = (1 << 5);
         const NONE                       = 0;
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, ShaderType)]
 pub struct ObjectMaterialUniformData {
     pub flags: u32,
@@ -171,6 +175,7 @@ pub struct ObjectMaterialUniformData {
     pub alpha_value: f32,
     pub lightmap_uv_offset: Vec2,
     pub lightmap_uv_scale: f32,
+    pub glow_color: Vec3,
 }
 
 impl From<&ObjectMaterial> for ObjectMaterialUniformData {
@@ -180,29 +185,42 @@ impl From<&ObjectMaterial> for ObjectMaterialUniformData {
         let mut alpha_value = 1.0;
 
         if material.specular_texture.is_some() {
-            flags |= ObjectMaterialFlags::ALPHA_MODE_OPAQUE | ObjectMaterialFlags::SPECULAR;
-            alpha_cutoff = 1.0;
-        } else {
-            if material.alpha_enabled {
-                flags |= ObjectMaterialFlags::ALPHA_MODE_BLEND;
+            flags |= ObjectMaterialFlags::SPECULAR;
+        }
 
-                if let Some(alpha_ref) = material.alpha_test {
-                    flags |= ObjectMaterialFlags::ALPHA_MODE_MASK;
-                    alpha_cutoff = alpha_ref;
-                }
-            } else {
-                flags |= ObjectMaterialFlags::ALPHA_MODE_OPAQUE;
+        if material.alpha_enabled {
+            flags |= ObjectMaterialFlags::ALPHA_MODE_BLEND;
+
+            if let Some(alpha_ref) = material.alpha_test {
+                flags |= ObjectMaterialFlags::ALPHA_MODE_MASK;
+                alpha_cutoff = alpha_ref;
             }
+        } else {
+            flags |= ObjectMaterialFlags::ALPHA_MODE_OPAQUE;
+        }
 
-            if let Some(material_alpha_value) = material.alpha_value {
-                if material_alpha_value == 1.0 {
-                    flags |= ObjectMaterialFlags::ALPHA_MODE_OPAQUE;
-                } else {
-                    flags |= ObjectMaterialFlags::HAS_ALPHA_VALUE;
-                    alpha_value = material_alpha_value;
-                }
+        if let Some(material_alpha_value) = material.alpha_value {
+            if material_alpha_value == 1.0 {
+                flags |= ObjectMaterialFlags::ALPHA_MODE_OPAQUE;
+            } else {
+                flags.remove(ObjectMaterialFlags::ALPHA_MODE_OPAQUE);
+                flags |=
+                    ObjectMaterialFlags::ALPHA_MODE_BLEND | ObjectMaterialFlags::HAS_ALPHA_VALUE;
+                alpha_value = material_alpha_value;
             }
         }
+
+        let glow_color = match material.glow {
+            Some(ObjectMaterialGlow::Simple(c))
+            | Some(ObjectMaterialGlow::Light(c))
+            | Some(ObjectMaterialGlow::Texture(c))
+            | Some(ObjectMaterialGlow::TextureLight(c))
+            | Some(ObjectMaterialGlow::Alpha(c)) => {
+                flags |= ObjectMaterialFlags::HAS_GLOW;
+                c
+            }
+            None => Vec3::ZERO,
+        };
 
         ObjectMaterialUniformData {
             flags: flags.bits(),
@@ -210,6 +228,7 @@ impl From<&ObjectMaterial> for ObjectMaterialUniformData {
             alpha_value,
             lightmap_uv_offset: material.lightmap_uv_offset,
             lightmap_uv_scale: material.lightmap_uv_scale,
+            glow_color,
         }
     }
 }
@@ -329,25 +348,21 @@ impl Material for ObjectMaterial {
     fn alpha_mode(&self) -> bevy::prelude::AlphaMode {
         let mut alpha_mode;
 
-        if self.specular_texture.is_some() {
-            alpha_mode = AlphaMode::Opaque;
-        } else {
-            if self.alpha_enabled {
-                alpha_mode = AlphaMode::Blend;
+        if self.alpha_enabled {
+            alpha_mode = AlphaMode::Blend;
 
-                if let Some(alpha_ref) = self.alpha_test {
-                    alpha_mode = AlphaMode::Mask(alpha_ref);
-                }
-            } else {
-                alpha_mode = AlphaMode::Opaque;
+            if let Some(alpha_ref) = self.alpha_test {
+                alpha_mode = AlphaMode::Mask(alpha_ref);
             }
+        } else {
+            alpha_mode = AlphaMode::Opaque;
+        }
 
-            if let Some(material_alpha_value) = self.alpha_value {
-                if material_alpha_value == 1.0 {
-                    alpha_mode = AlphaMode::Opaque;
-                } else {
-                    alpha_mode = AlphaMode::Blend;
-                }
+        if let Some(material_alpha_value) = self.alpha_value {
+            if material_alpha_value == 1.0 {
+                alpha_mode = AlphaMode::Opaque;
+            } else {
+                alpha_mode = AlphaMode::Blend;
             }
         }
 
@@ -372,6 +387,18 @@ impl Material for ObjectMaterial {
 
         if key.bind_group_data.two_sided {
             descriptor.primitive.cull_mode = None;
+        }
+
+        // Enable alpha-to-coverage for alpha-tested materials (grass, leaves, fences).
+        // This converts alpha values into per-sample MSAA coverage masks, giving
+        // smooth edges on vegetation instead of hard aliased discard boundaries.
+        if key.bind_group_data.alpha_test {
+            descriptor.multisample.alpha_to_coverage_enabled = true;
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment
+                    .shader_defs
+                    .push(ShaderDefVal::Bool("ALPHA_TO_COVERAGE".into(), true));
+            }
         }
 
         let mut vertex_attributes = vec![
@@ -470,6 +497,7 @@ pub struct ObjectMaterialKey {
     two_sided: bool,
     z_test_enabled: bool,
     z_write_enabled: bool,
+    alpha_test: bool,
 }
 
 impl From<&ObjectMaterial> for ObjectMaterialKey {
@@ -479,6 +507,32 @@ impl From<&ObjectMaterial> for ObjectMaterialKey {
             two_sided: material.two_sided,
             z_test_enabled: material.z_test_enabled,
             z_write_enabled: material.z_write_enabled,
+            alpha_test: material.alpha_enabled && material.alpha_test.is_some(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::prelude::{AlphaMode, Material};
+
+    use super::{ObjectMaterial, ObjectMaterialFlags, ObjectMaterialUniformData};
+
+    #[test]
+    fn specular_material_with_alpha_value_uses_blend_mode() {
+        let material = ObjectMaterial {
+            alpha_value: Some(0.3),
+            specular_texture: Some(Default::default()),
+            ..Default::default()
+        };
+
+        assert!(matches!(material.alpha_mode(), AlphaMode::Blend));
+
+        let uniform = ObjectMaterialUniformData::from(&material);
+        let flags = ObjectMaterialFlags::from_bits_retain(uniform.flags);
+        assert!(flags.contains(ObjectMaterialFlags::SPECULAR));
+        assert!(flags.contains(ObjectMaterialFlags::HAS_ALPHA_VALUE));
+        assert!(flags.contains(ObjectMaterialFlags::ALPHA_MODE_BLEND));
+        assert!(!flags.contains(ObjectMaterialFlags::ALPHA_MODE_OPAQUE));
     }
 }

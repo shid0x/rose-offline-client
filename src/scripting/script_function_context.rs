@@ -5,13 +5,15 @@ use bevy::{
 
 use rose_game_common::components::{
     AbilityValues, BasicStats, CharacterInfo, Equipment, ExperiencePoints, HealthPoints, Inventory,
-    Level, ManaPoints, MoveSpeed, Npc, QuestState, SkillPoints, Stamina, StatPoints, Team,
-    UnionMembership,
+    Level, ManaPoints, MoveSpeed, Npc, QuestState, SkillList, SkillPoints, Stamina, StatPoints,
+    Team, UnionMembership,
 };
 
 use crate::{
-    components::{ClanMembership, ClientEntity, PlayerCharacter},
-    events::{BankEvent, ChatboxEvent, ClanDialogEvent, NpcStoreEvent, SystemFuncEvent},
+    components::{Clan, ClanMembership, ClientEntity, PartyInfo, PlayerCharacter, Position},
+    events::{
+        BankEvent, ChatboxEvent, ClanDialogEvent, CraftEvent, NpcStoreEvent, SystemFuncEvent,
+    },
 };
 
 #[derive(WorldQuery)]
@@ -20,20 +22,24 @@ pub struct ScriptCharacterQuery<'w> {
     pub ability_values: &'w AbilityValues,
     pub character_info: &'w CharacterInfo,
     pub basic_stats: &'w BasicStats,
+    pub position: &'w Position,
     pub client_entity: Option<&'w ClientEntity>,
     pub equipment: &'w Equipment,
     pub experience_points: &'w ExperiencePoints,
     pub health_points: &'w mut HealthPoints,
-    pub inventory: &'w Inventory,
+    pub inventory: &'w mut Inventory,
     pub level: &'w Level,
     pub mana_points: &'w mut ManaPoints,
     pub move_speed: &'w MoveSpeed,
+    pub skill_list: &'w SkillList,
     pub skill_points: &'w SkillPoints,
     pub stamina: &'w Stamina,
     pub stat_points: &'w StatPoints,
     pub team: &'w Team,
     pub union_membership: &'w UnionMembership,
+    pub clan: Option<&'w Clan>,
     pub clan_membership: Option<&'w ClanMembership>,
+    pub party_info: Option<&'w PartyInfo>,
 }
 
 #[derive(SystemParam)]
@@ -45,6 +51,7 @@ pub struct ScriptFunctionContext<'w, 's> {
     pub bank_events: EventWriter<'w, BankEvent>,
     pub chatbox_events: EventWriter<'w, ChatboxEvent>,
     pub clan_dialog_events: EventWriter<'w, ClanDialogEvent>,
+    pub craft_events: EventWriter<'w, CraftEvent>,
     pub npc_store_events: EventWriter<'w, NpcStoreEvent>,
     pub script_system_events: EventWriter<'w, SystemFuncEvent>,
 }

@@ -1,4 +1,4 @@
-use bevy::prelude::{Added, Entity, Query, RemovedComponents, Res, Transform, With, Without};
+use bevy::prelude::{Added, Query, RemovedComponents, Res, Transform, With, Without};
 
 use rose_game_common::components::Equipment;
 

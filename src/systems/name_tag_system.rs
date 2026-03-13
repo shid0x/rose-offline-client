@@ -4,9 +4,9 @@ use arrayvec::ArrayVec;
 use bevy::{
     ecs::query::WorldQuery,
     prelude::{
-        Assets, BuildChildren, Changed, Color, Commands, ComputedVisibility,
-        DespawnRecursiveExt, Entity, EventReader, GlobalTransform, Handle, Image, Local, Or,
-        Query, RemovedComponents, Res, ResMut, Transform, Vec2, Vec3, Visibility, With, Without,
+        Assets, BuildChildren, Changed, Color, Commands, ComputedVisibility, DespawnRecursiveExt,
+        Entity, EventReader, GlobalTransform, Handle, Image, Local, Or, Query, RemovedComponents,
+        Res, ResMut, Transform, Vec2, Vec3, Visibility, With, Without,
     },
     render::{
         render_resource::{Extent3d, TextureDimension, TextureFormat},
@@ -18,7 +18,7 @@ use bevy::{
 };
 use bevy_egui::{egui, EguiContexts};
 
-use rose_game_common::components::{Level, Npc, Team};
+use rose_game_common::components::{Level, Npc, StatusEffects, Team};
 
 use crate::{
     components::{
@@ -29,13 +29,17 @@ use crate::{
     events::LoadZoneEvent,
     render::WorldUiRect,
     resources::{GameData, NameTagSettings, UiResources, UiSpriteSheetType},
+    systems::stealth_visibility_system::is_hidden_from_local_player,
 };
 
 const ORDER_HEALTH_BACKGROUND: u8 = 0;
 const ORDER_HEALTH_FOREGROUND: u8 = 1;
+const ORDER_STORE_BACKGROUND: u8 = 1;
 const ORDER_NAME: u8 = 2;
 const ORDER_TARGET_MARK: u8 = 2;
 const MAX_NAME_ROWS: usize = 2;
+const SHOP_TITLE_BOX_WIDTH: f32 = 256.0;
+const SHOP_TITLE_BOX_HEIGHT: f32 = 32.0;
 
 pub struct NameTagData {
     pub image: Handle<Image>,
@@ -58,6 +62,7 @@ pub struct NameTagCache {
 
 #[derive(WorldQuery)]
 pub struct PlayerQuery<'w> {
+    entity: Entity,
     level: &'w Level,
     team: &'w Team,
 }
@@ -70,6 +75,7 @@ pub struct NameTagObjectQuery<'w> {
     npc: Option<&'w Npc>,
     personal_store: Option<&'w PersonalStore>,
     level: Option<&'w Level>,
+    status_effects: &'w StatusEffects,
     team: Option<&'w Team>,
     clan_membership: Option<&'w ClanMembership>,
 }
@@ -105,6 +111,82 @@ pub fn get_monster_name_tag_color(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use bevy_egui::egui;
+
+    use super::get_clan_name_tag_color;
+
+    #[test]
+    fn clan_name_color_matches_original_palette() {
+        assert_eq!(
+            get_clan_name_tag_color(1),
+            egui::Color32::from_rgb(137, 243, 255)
+        );
+        assert_eq!(
+            get_clan_name_tag_color(2),
+            egui::Color32::from_rgb(150, 255, 122)
+        );
+        assert_eq!(
+            get_clan_name_tag_color(3),
+            egui::Color32::from_rgb(255, 228, 122)
+        );
+        assert_eq!(
+            get_clan_name_tag_color(4),
+            egui::Color32::from_rgb(255, 166, 107)
+        );
+        assert_eq!(
+            get_clan_name_tag_color(5),
+            egui::Color32::from_rgb(255, 113, 107)
+        );
+        assert_eq!(
+            get_clan_name_tag_color(6),
+            egui::Color32::from_rgb(255, 136, 200)
+        );
+        assert_eq!(
+            get_clan_name_tag_color(7),
+            egui::Color32::from_rgb(224, 149, 255)
+        );
+        assert_eq!(
+            get_clan_name_tag_color(99),
+            egui::Color32::from_rgb(217, 217, 217)
+        );
+    }
+
+    #[test]
+    fn clan_level_must_be_part_of_nametag_cache_key() {
+        assert_ne!(format!("Knight\nRose#{}", 1), format!("Knight\nRose#{}", 2));
+    }
+}
+
+pub fn get_clan_name_tag_color(clan_level: u32) -> egui::Color32 {
+    match clan_level {
+        1 => egui::Color32::from_rgb(137, 243, 255),
+        2 => egui::Color32::from_rgb(150, 255, 122),
+        3 => egui::Color32::from_rgb(255, 228, 122),
+        4 => egui::Color32::from_rgb(255, 166, 107),
+        5 => egui::Color32::from_rgb(255, 113, 107),
+        6 => egui::Color32::from_rgb(255, 136, 200),
+        7 => egui::Color32::from_rgb(224, 149, 255),
+        _ => egui::Color32::from_rgb(217, 217, 217),
+    }
+}
+
+fn get_name_tag_cache_key(object: &NameTagObjectQueryItem) -> String {
+    if let Some(store) = object.personal_store {
+        store.title.clone()
+    } else if let Some(clan_membership) = &object.clan_membership {
+        format!(
+            "{}\n{}#{}",
+            object.name.name,
+            clan_membership.name,
+            clan_membership.level.get()
+        )
+    } else {
+        object.name.name.clone()
+    }
+}
+
 fn create_pending_nametag(
     name_tag_settings: &NameTagSettings,
     egui_context: &mut EguiContexts,
@@ -120,7 +202,7 @@ fn create_pending_nametag(
     let layout_job = match name_tag_type {
         NameTagType::Character => {
             let name_color = if object.personal_store.is_some() {
-                egui::Color32::YELLOW
+                egui::Color32::WHITE
             } else if object.team.map_or(false, |team| {
                 Some(team.id) != player.map(|player| player.team.id)
             }) {
@@ -129,8 +211,16 @@ fn create_pending_nametag(
                 egui::Color32::WHITE
             };
 
-            // Build layout with clan name above player name (same pattern as NPC two-line tags)
-            if let Some(clan_membership) = &object.clan_membership {
+            if object.personal_store.is_some() {
+                egui::epaint::text::LayoutJob::single_section(
+                    display_name,
+                    egui::TextFormat::simple(
+                        egui::FontId::proportional(name_tag_settings.font_size[name_tag_type]),
+                        name_color,
+                    ),
+                )
+            } else if let Some(clan_membership) = &object.clan_membership {
+                // Build layout with clan name above player name (same pattern as NPC two-line tags)
                 if !clan_membership.name.is_empty() {
                     let mut clan_text = clan_membership.name.clone();
                     clan_text.push('\n');
@@ -138,7 +228,7 @@ fn create_pending_nametag(
                         clan_text,
                         egui::TextFormat::simple(
                             egui::FontId::proportional(name_tag_settings.font_size[name_tag_type]),
-                            egui::Color32::from_rgb(100, 180, 255),
+                            get_clan_name_tag_color(clan_membership.level.get()),
                         ),
                     );
                     layout_job.append(
@@ -434,7 +524,12 @@ pub fn name_tag_system(
     query_add: Query<NameTagObjectQuery, Without<NameTagEntity>>,
     query_changed: Query<
         (Entity, Option<&NameTagEntity>),
-        Or<(Changed<ClientEntityName>, Changed<PersonalStore>, Changed<ClanMembership>)>,
+        Or<(
+            Changed<ClientEntityName>,
+            Changed<PersonalStore>,
+            Changed<ClanMembership>,
+            Changed<StatusEffects>,
+        )>,
     >,
     mut removed_personal_store: RemovedComponents<PersonalStore>,
     mut removed_clan_membership: RemovedComponents<ClanMembership>,
@@ -502,6 +597,17 @@ pub fn name_tag_system(
     }
 
     for object in query_add.iter() {
+        if let Some(player) = player.as_ref() {
+            if is_hidden_from_local_player(
+                Some(object.status_effects),
+                object.team,
+                player.team,
+                player.entity == object.entity,
+            ) {
+                continue;
+            }
+        }
+
         let name_tag_type = if let Some(npc) = object.npc {
             if object
                 .team
@@ -519,13 +625,7 @@ pub fn name_tag_system(
             NameTagType::Character
         };
 
-        let cache_key = if let Some(store) = object.personal_store {
-            store.title.clone()
-        } else if let Some(clan_membership) = &object.clan_membership {
-            format!("{}\n{}", object.name.name, clan_membership.name)
-        } else {
-            object.name.name.clone()
-        };
+        let cache_key = get_name_tag_cache_key(&object);
         let name_tag_data = if let Some(name_tag_data) = name_tag_cache.cache.get(&cache_key) {
             name_tag_data
         } else if let Some(pending_name_tag_data) = name_tag_cache.pending.remove(&object.entity) {
@@ -575,6 +675,24 @@ pub fn name_tag_system(
                 NoFrustumCulling,
             ))
             .id();
+
+        let store_background_rect = object.personal_store.as_ref().map(|_| {
+            let title_rect = &name_tag_data.rects[name_tag_data.rects.len() - 1];
+            let title_center_y = title_rect.screen_offset.y + title_rect.screen_size.y / 2.0;
+
+            WorldUiRect {
+                screen_offset: Vec2::new(
+                    -SHOP_TITLE_BOX_WIDTH / 2.0,
+                    title_center_y - SHOP_TITLE_BOX_HEIGHT / 2.0,
+                ),
+                screen_size: Vec2::new(SHOP_TITLE_BOX_WIDTH, SHOP_TITLE_BOX_HEIGHT),
+                image: ui_resources.personal_store_title_box.clone_weak(),
+                uv_min: Vec2::ZERO,
+                uv_max: Vec2::ONE,
+                color: Color::WHITE,
+                order: ORDER_STORE_BACKGROUND,
+            }
+        });
 
         let target_mark = if let Some(npc_type_index) = object
             .npc
@@ -711,6 +829,19 @@ pub fn name_tag_system(
                 color: Color::WHITE,
                 order: ORDER_TARGET_MARK,
             });
+        }
+
+        if let Some(store_background_rect) = store_background_rect {
+            commands
+                .spawn((
+                    store_background_rect,
+                    Transform::default(),
+                    GlobalTransform::default(),
+                    Visibility::default(),
+                    ComputedVisibility::default(),
+                    NoFrustumCulling,
+                ))
+                .set_parent(name_tag_entity);
         }
 
         for (rect_index, rect) in name_tag_data.rects.iter().enumerate() {

@@ -3,17 +3,18 @@ use bevy::{
     prelude::{Assets, EventWriter, Local, Query, Res, ResMut, With},
 };
 use bevy_egui::{egui, EguiContexts};
+use rose_data::ClanMemberPosition;
 
 use rose_game_common::{
     components::{
         AbilityValues, BasicStatType, BasicStats, CharacterInfo, ExperiencePoints, Level,
-        MoveSpeed, Stamina, StatPoints, MAX_STAMINA,
+        MoveSpeed, Stamina, StatPoints, UnionMembership, MAX_STAMINA,
     },
     messages::client::ClientMessage,
 };
 
 use crate::{
-    components::PlayerCharacter,
+    components::{ClanMembership, PlayerCharacter},
     resources::{GameConnection, GameData, UiResources},
     ui::{
         widgets::{DataBindings, Dialog, DrawText},
@@ -40,6 +41,20 @@ const IID_BTN_UP_SENSE: i32 = 39;
 const IID_TAB_UNION: i32 = 41;
 // const IID_TAB_UNION_BG: i32 = 42;
 // const IID_TAB_UNION_BTN: i32 = 43;
+const UNION_STB_COLOR_COLUMN: usize = 1;
+const UNION_STB_STRING_ID_COLUMN: usize = 11;
+const UNION_COLORS: [egui::Color32; 10] = [
+    egui::Color32::from_rgb(255, 0, 0),     // red
+    egui::Color32::from_rgb(0, 255, 0),     // green
+    egui::Color32::from_rgb(0, 0, 255),     // blue
+    egui::Color32::from_rgb(0, 0, 0),       // black
+    egui::Color32::from_rgb(255, 255, 255), // white
+    egui::Color32::from_rgb(255, 255, 0),   // yellow
+    egui::Color32::from_rgb(150, 150, 150), // gray
+    egui::Color32::from_rgb(255, 0, 255),   // violet
+    egui::Color32::from_rgb(255, 128, 0),   // orange
+    egui::Color32::from_rgb(255, 136, 200), // pink
+];
 
 pub struct UiStateCharacterInfo {
     current_tab: i32,
@@ -53,16 +68,38 @@ impl Default for UiStateCharacterInfo {
     }
 }
 
+fn clan_position_name(game_data: &GameData, position: ClanMemberPosition) -> String {
+    let clan_position_name = game_data
+        .string_database
+        .get_clan_member_position(position)
+        .trim();
+    if !clan_position_name.is_empty() {
+        return clan_position_name.to_string();
+    }
+
+    match position {
+        ClanMemberPosition::Penalty => "Penalty".to_string(),
+        ClanMemberPosition::Junior => "Junior".to_string(),
+        ClanMemberPosition::Senior => "Senior".to_string(),
+        ClanMemberPosition::Veteran => "Veteran".to_string(),
+        ClanMemberPosition::Commander => "Commander".to_string(),
+        ClanMemberPosition::DeputyMaster => "Deputy Master".to_string(),
+        ClanMemberPosition::Master => "Master".to_string(),
+    }
+}
+
 #[derive(WorldQuery)]
 pub struct PlayerQuery<'w> {
     ability_values: &'w AbilityValues,
     basic_stats: &'w BasicStats,
+    clan_membership: Option<&'w ClanMembership>,
     character_info: &'w CharacterInfo,
     experience_points: &'w ExperiencePoints,
     level: &'w Level,
     move_speed: &'w MoveSpeed,
     stamina: &'w Stamina,
     stat_points: &'w StatPoints,
+    union_membership: &'w UnionMembership,
 }
 
 pub fn ui_character_info_system(
@@ -133,6 +170,18 @@ pub fn ui_character_info_system(
                 },
                 |ui, bindings| match bindings.get_tab(IID_TABBEDPANE) {
                     Some(&mut IID_TAB_BASICINFO) => {
+                        let clan_name = player
+                            .clan_membership
+                            .map(|clan_membership| clan_membership.name.trim())
+                            .filter(|name| !name.is_empty())
+                            .unwrap_or("-");
+                        let clan_rank = player.clan_membership.map_or_else(
+                            || "-".to_string(),
+                            |clan_membership| {
+                                clan_position_name(&game_data, clan_membership.position)
+                            },
+                        );
+
                         ui.add_label_at(egui::pos2(59.0, 67.0), &player.character_info.name);
                         ui.add_label_at(
                             egui::pos2(59.0, 88.0),
@@ -140,7 +189,8 @@ pub fn ui_character_info_system(
                                 .string_database
                                 .get_job_name(player.character_info.job),
                         );
-                        // ui.add_label_at(egui::pos2(59.0, 109.0), ""); // TODO: Clan name
+                        ui.add_label_at(egui::pos2(59.0, 109.0), clan_name);
+                        ui.add_label_at(egui::pos2(59.0, 130.0), clan_rank);
                         ui.add_label_at(
                             egui::pos2(59.0, 172.0),
                             &format!("{}", player.level.level),
@@ -213,7 +263,51 @@ pub fn ui_character_info_system(
                             &format!("{}", player.move_speed.speed),
                         );
                     }
-                    Some(&mut IID_TAB_UNION) => {}
+                    Some(&mut IID_TAB_UNION) => {
+                        let (union_name, union_name_color) = player
+                            .union_membership
+                            .current_union
+                            .and_then(|current_union| {
+                                let union_id = current_union.get();
+                                let union_string_key = game_data
+                                    .stb_union
+                                    .try_get(union_id, UNION_STB_STRING_ID_COLUMN)?;
+                                let union_name = game_data
+                                    .string_database
+                                    .union
+                                    .get_text_string(
+                                        game_data.string_database.language,
+                                        union_string_key,
+                                    )
+                                    .filter(|name| !name.is_empty())?;
+                                let union_name_color = game_data
+                                    .stb_union
+                                    .try_get_int(union_id, UNION_STB_COLOR_COLUMN)
+                                    .and_then(|color_index| {
+                                        UNION_COLORS.get(color_index as usize).copied()
+                                    })
+                                    .unwrap_or(egui::Color32::WHITE);
+                                Some((union_name, union_name_color))
+                            })
+                            .unwrap_or(("-", egui::Color32::WHITE));
+
+                        ui.add_label_at(
+                            egui::pos2(90.0, 67.0),
+                            egui::RichText::new(union_name).color(union_name_color),
+                        );
+
+                        for column in 0..2 {
+                            let x = 50.0 + (column as f32 * 113.0);
+                            for row in 0..5 {
+                                let index = column * 5 + row;
+                                let y = 130.0 + (row as f32 * 21.0);
+                                ui.add_label_at(
+                                    egui::pos2(x, y),
+                                    format!("{}", player.union_membership.points[index]),
+                                );
+                            }
+                        }
+                    }
                     _ => {}
                 },
             );

@@ -20,6 +20,7 @@ macro_rules! widget_to_rect {
 mod button;
 mod caption;
 mod checkbox;
+mod combobox;
 mod data_bindings;
 mod dialog;
 mod draw;
@@ -43,6 +44,7 @@ pub use self::image::Image;
 pub use button::Button;
 pub use caption::Caption;
 pub use checkbox::Checkbox;
+pub use combobox::ComboBox;
 pub use data_bindings::DataBindings;
 pub use dialog::Dialog;
 pub use draw::DrawText;
@@ -85,6 +87,9 @@ pub enum Widget {
     Caption(Caption),
     #[serde(rename = "CHECKBOX")]
     Checkbox(Checkbox),
+    #[serde(rename = "COMBOBOX")]
+    #[serde(alias = "JCOMBOBOX")]
+    ComboBox(ComboBox),
     #[serde(rename = "GUAGE")]
     Gauge(Gauge),
     #[serde(rename = "LISTBOX")]
@@ -124,6 +129,7 @@ impl Widget {
             Widget::Button(x) => x.id,
             Widget::Caption(x) => x.id,
             Widget::Checkbox(x) => x.id,
+            Widget::ComboBox(x) => x.id,
             Widget::Gauge(x) => x.id,
             Widget::Listbox(x) => x.id,
             Widget::Editbox(x) => x.id,
@@ -148,6 +154,7 @@ impl DrawWidget for Widget {
             Widget::Button(this) => this.draw_widget(ui, bindings),
             Widget::Caption(this) => this.draw_widget(ui, bindings),
             Widget::Checkbox(this) => this.draw_widget(ui, bindings),
+            Widget::ComboBox(this) => this.draw_widget(ui, bindings),
             Widget::Gauge(this) => this.draw_widget(ui, bindings),
             Widget::Listbox(this) => this.draw_widget(ui, bindings),
             Widget::Editbox(this) => this.draw_widget(ui, bindings),
@@ -172,6 +179,7 @@ impl LoadWidget for Widget {
             Widget::Button(this) => this.load_widget(ui_resources),
             Widget::Caption(this) => this.load_widget(ui_resources),
             Widget::Checkbox(this) => this.load_widget(ui_resources),
+            Widget::ComboBox(this) => this.load_widget(ui_resources),
             Widget::Gauge(this) => this.load_widget(ui_resources),
             Widget::Listbox(this) => this.load_widget(ui_resources),
             Widget::Editbox(this) => this.load_widget(ui_resources),
@@ -234,6 +242,7 @@ impl GetWidget for Vec<Widget> {
                 Widget::Button(_)
                 | Widget::Caption(_)
                 | Widget::Checkbox(_)
+                | Widget::ComboBox(_)
                 | Widget::Gauge(_)
                 | Widget::Listbox(_)
                 | Widget::Editbox(_)
@@ -280,6 +289,7 @@ impl GetWidget for Vec<Widget> {
                 Widget::Button(_)
                 | Widget::Caption(_)
                 | Widget::Checkbox(_)
+                | Widget::ComboBox(_)
                 | Widget::Gauge(_)
                 | Widget::Listbox(_)
                 | Widget::Editbox(_)

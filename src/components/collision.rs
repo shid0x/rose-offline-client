@@ -70,3 +70,4 @@ pub const COLLISION_FILTER_INSPECTABLE: Group = Group::from_bits_truncate(1 << 1
 pub const COLLISION_FILTER_COLLIDABLE: Group = Group::from_bits_truncate(1 << 17);
 pub const COLLISION_FILTER_CLICKABLE: Group = Group::from_bits_truncate(1 << 18);
 pub const COLLISION_FILTER_MOVEABLE: Group = Group::from_bits_truncate(1 << 19);
+pub const COLLISION_FILTER_GROUND_SUPPORT: Group = Group::from_bits_truncate(1 << 20);

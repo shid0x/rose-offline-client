@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bevy::{
     math::Vec3Swizzles,
-    prelude::{Assets, Entity, EventReader, Local, Query, Res, With},
+    prelude::{Assets, Entity, EventReader, Local, Query, Res, ResMut, With},
 };
 use bevy_egui::{egui, EguiContexts};
 use rose_file_readers::{ConFile, ConMessageType};
@@ -10,7 +10,9 @@ use rose_file_readers::{ConFile, ConMessageType};
 use crate::{
     components::{ClientEntityName, PlayerCharacter, Position},
     events::ConversationDialogEvent,
-    resources::{GameData, UiResources, UiSprite},
+    resources::{
+        ConversationDialogState as ConversationDialogResource, GameData, UiResources, UiSprite,
+    },
     scripting::{
         lua4::{Lua4Function, Lua4VM, Lua4VMError, Lua4VMRustClosures, Lua4Value},
         LuaGameConstants, LuaGameFunctions, LuaQuestFunctions, LuaUserValueEntity,
@@ -368,18 +370,27 @@ pub fn conversation_dialog_system(
     mut conversation_dialog_events: EventReader<ConversationDialogEvent>,
     mut lua_function_context: ScriptFunctionContext,
     mut ui_state: Local<UiConversationDialogState>,
+    mut conversation_dialog_state: ResMut<ConversationDialogResource>,
     script_function_resources: ScriptFunctionResources,
     query_player_position: Query<&Position, With<PlayerCharacter>>,
     query_position: Query<&Position>,
     query_name: Query<&ClientEntityName>,
-    lua_game_constants: Res<LuaGameConstants>,
-    lua_game_functions: Res<LuaGameFunctions>,
-    lua_quest_functions: Res<LuaQuestFunctions>,
-    game_data: Res<GameData>,
-    vfs_resource: Res<VfsResource>,
-    ui_resources: Res<UiResources>,
-    dialog_assets: Res<Assets<Dialog>>,
+    lua_resources: (
+        Res<LuaGameConstants>,
+        Res<LuaGameFunctions>,
+        Res<LuaQuestFunctions>,
+    ),
+    resources: (
+        Res<GameData>,
+        Res<VfsResource>,
+        Res<UiResources>,
+        Res<Assets<Dialog>>,
+    ),
 ) {
+    let (lua_game_constants, lua_game_functions, lua_quest_functions) = lua_resources;
+    let (game_data, vfs_resource, ui_resources, dialog_assets) = resources;
+    conversation_dialog_state.is_open = false;
+
     let ui_state = &mut *ui_state;
     let dialog = if let Some(dialog) = ui_state
         .dialog_instance
@@ -465,6 +476,7 @@ pub fn conversation_dialog_system(
                                 0,
                             ) {
                                 *current_dialog_state = Some(next_dialog_state);
+                                conversation_dialog_state.is_open = true;
                             }
                         }
                     }
@@ -481,6 +493,7 @@ pub fn conversation_dialog_system(
     }
 
     if let Some(dialog_state) = current_dialog_state.as_mut() {
+        conversation_dialog_state.is_open = true;
         let mut selected_response = None;
         let mut open = true;
 

@@ -9,6 +9,8 @@ mod ui_character_select_system;
 mod ui_chatbox_system;
 mod ui_clan_invite_system;
 mod ui_clan_system;
+mod ui_community_system;
+mod ui_craft_system;
 mod ui_create_clan;
 mod ui_debug_camera_info_system;
 mod ui_debug_client_entity_list_system;
@@ -58,6 +60,7 @@ pub mod widgets;
 pub struct UiStateWindows {
     pub character_info_open: bool,
     pub clan_open: bool,
+    pub community_open: bool,
     pub inventory_open: bool,
     pub skill_list_open: bool,
     pub skill_tree_open: bool,
@@ -72,10 +75,59 @@ pub struct UiStateWindows {
     // Below are only opened via in game events rather than directly
     pub bank_open: bool,
     pub create_clan_open: bool,
+    pub craft_manufacture_open: bool,
+    pub craft_manufacture_skill_slot: Option<rose_game_common::components::SkillSlot>,
+    pub craft_manufacture_make_number: Option<u32>,
+    pub craft_upgrade_open: bool,
+    pub craft_upgrade_source: Option<UiUpgradeSource>,
+    pub craft_disassemble_open: bool,
+    pub craft_disassemble_source: Option<UiDisassembleSource>,
 
     // Test ui
     pub selected_target_ui_open: bool,
 }
+
+#[derive(Clone, Copy)]
+pub enum UiDisassembleSource {
+    Skill(rose_game_common::components::SkillSlot),
+    Npc(rose_game_common::messages::ClientEntityId),
+}
+
+impl PartialEq for UiDisassembleSource {
+    fn eq(&self, other: &Self) -> bool {
+        match (*self, *other) {
+            (
+                Self::Skill(rose_game_common::components::SkillSlot(lhs_page, lhs_index)),
+                Self::Skill(rose_game_common::components::SkillSlot(rhs_page, rhs_index)),
+            ) => lhs_page == rhs_page && lhs_index == rhs_index,
+            (Self::Npc(lhs_id), Self::Npc(rhs_id)) => lhs_id == rhs_id,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for UiDisassembleSource {}
+
+#[derive(Clone, Copy)]
+pub enum UiUpgradeSource {
+    Skill(rose_game_common::components::SkillSlot),
+    Npc(rose_game_common::messages::ClientEntityId),
+}
+
+impl PartialEq for UiUpgradeSource {
+    fn eq(&self, other: &Self) -> bool {
+        match (*self, *other) {
+            (
+                Self::Skill(rose_game_common::components::SkillSlot(lhs_page, lhs_index)),
+                Self::Skill(rose_game_common::components::SkillSlot(rhs_page, rhs_index)),
+            ) => lhs_page == rhs_page && lhs_index == rhs_index,
+            (Self::Npc(lhs_id), Self::Npc(rhs_id)) => lhs_id == rhs_id,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for UiUpgradeSource {}
 
 use bevy::prelude::Resource;
 pub use dialog_loader::{load_dialog_sprites_system, DialogInstance, DialogLoader};
@@ -89,6 +141,8 @@ pub use ui_character_select_system::ui_character_select_system;
 pub use ui_chatbox_system::ui_chatbox_system;
 pub use ui_clan_invite_system::ui_clan_invite_system;
 pub use ui_clan_system::ui_clan_system;
+pub use ui_community_system::ui_community_system;
+pub use ui_craft_system::ui_craft_system;
 pub use ui_create_clan::ui_create_clan_system;
 pub use ui_debug_camera_info_system::ui_debug_camera_info_system;
 pub use ui_debug_client_entity_list_system::ui_debug_client_entity_list_system;

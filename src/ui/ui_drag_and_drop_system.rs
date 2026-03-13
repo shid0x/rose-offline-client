@@ -11,6 +11,9 @@ use crate::{
 #[derive(Default, Resource)]
 pub struct UiStateDragAndDrop {
     pub dragged_item: Option<DragAndDropId>,
+    /// Tracks which inventory slots are pending sale in the NPC store.
+    /// The inventory system reads this to darken items that are queued for selling.
+    pub pending_sell_item_slots: Vec<ItemSlot>,
 }
 
 pub fn ui_drag_and_drop_system(

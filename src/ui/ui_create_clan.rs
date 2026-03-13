@@ -48,7 +48,7 @@ pub fn ui_create_clan_system(
     let player_has_clan = query_player_clan.get_single().is_ok();
 
     for event in clan_dialog_events.iter() {
-        if matches!(event, ClanDialogEvent::Open) {
+        if matches!(event, ClanDialogEvent::Open { .. }) {
             if player_has_clan {
                 ui_state_windows.create_clan_open = false;
                 ui_state.clear();

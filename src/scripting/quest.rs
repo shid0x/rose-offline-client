@@ -3,44 +3,66 @@ use rose_file_readers::QsdVariableType;
 
 use crate::scripting::{
     quest_trigger_check_conditions, quest_triggers_apply_rewards, quest_triggers_skip_rewards,
-    QuestFunctionContext, ScriptFunctionContext, ScriptFunctionResources,
+    QuestConditionCheckResult, QuestFunctionContext, ScriptFunctionContext,
+    ScriptFunctionResources,
 };
 
 pub enum QuestError {
     TriggerNotFound,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum QuestCheckConditionsResult {
+    Passed,
+    FailedCondition,
+    TriggerNotFound,
+    UnsupportedCondition,
+}
+
+pub fn quest_check_result_allows_trigger(result: QuestCheckConditionsResult) -> bool {
+    matches!(
+        result,
+        QuestCheckConditionsResult::Passed | QuestCheckConditionsResult::UnsupportedCondition
+    )
+}
+
 pub fn quest_check_conditions(
     script_resources: &ScriptFunctionResources,
     script_context: &mut ScriptFunctionContext,
     trigger_hash: QuestTriggerHash,
-) -> Result<bool, QuestError> {
+) -> QuestCheckConditionsResult {
     let mut trigger = script_resources
         .game_data
         .quests
         .get_trigger_by_hash(trigger_hash);
     if trigger.is_none() {
-        return Err(QuestError::TriggerNotFound);
+        return QuestCheckConditionsResult::TriggerNotFound;
     }
 
     let mut quest_context = QuestFunctionContext::default();
     let mut success = false;
+    let mut success_with_unsupported_conditions = false;
 
     while trigger.is_some() {
         let quest_trigger = trigger.unwrap();
+        let condition_result = quest_trigger_check_conditions(
+            script_resources,
+            script_context,
+            &mut quest_context,
+            quest_trigger,
+        );
 
-        if quest_trigger_check_conditions(
-            script_resources,
-            script_context,
-            &mut quest_context,
-            quest_trigger,
-        ) && quest_triggers_skip_rewards(
-            script_resources,
-            script_context,
-            &mut quest_context,
-            quest_trigger,
-        ) {
+        if condition_result != QuestConditionCheckResult::FailedCondition
+            && quest_triggers_skip_rewards(
+                script_resources,
+                script_context,
+                &mut quest_context,
+                quest_trigger,
+            )
+        {
             success = true;
+            success_with_unsupported_conditions |=
+                condition_result == QuestConditionCheckResult::UnsupportedCondition;
 
             if quest_context.next_quest_trigger.is_some() {
                 trigger = quest_context
@@ -59,7 +81,15 @@ pub fn quest_check_conditions(
         }
     }
 
-    Ok(success)
+    if success {
+        if success_with_unsupported_conditions {
+            QuestCheckConditionsResult::UnsupportedCondition
+        } else {
+            QuestCheckConditionsResult::Passed
+        }
+    } else {
+        QuestCheckConditionsResult::FailedCondition
+    }
 }
 
 pub fn quest_apply_rewards(
@@ -86,12 +116,14 @@ pub fn quest_apply_rewards(
             script_context,
             &mut quest_context,
             quest_trigger,
-        ) && quest_triggers_apply_rewards(
-            script_resources,
-            script_context,
-            &mut quest_context,
-            quest_trigger,
-        ) {
+        ) != QuestConditionCheckResult::FailedCondition
+            && quest_triggers_apply_rewards(
+                script_resources,
+                script_context,
+                &mut quest_context,
+                quest_trigger,
+            )
+        {
             success = true;
 
             if quest_context.next_quest_trigger.is_some() {
@@ -112,6 +144,27 @@ pub fn quest_apply_rewards(
     }
 
     Ok(success)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{quest_check_result_allows_trigger, QuestCheckConditionsResult};
+
+    #[test]
+    fn test_quest_check_result_allows_trigger_mapping() {
+        assert!(quest_check_result_allows_trigger(
+            QuestCheckConditionsResult::Passed
+        ));
+        assert!(quest_check_result_allows_trigger(
+            QuestCheckConditionsResult::UnsupportedCondition
+        ));
+        assert!(!quest_check_result_allows_trigger(
+            QuestCheckConditionsResult::FailedCondition
+        ));
+        assert!(!quest_check_result_allows_trigger(
+            QuestCheckConditionsResult::TriggerNotFound
+        ));
+    }
 }
 
 pub fn get_quest_variable(

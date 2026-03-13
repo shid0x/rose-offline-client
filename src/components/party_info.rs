@@ -17,6 +17,8 @@ pub struct PartyInfo {
     pub members: Vec<PartyMemberInfo>,
     pub item_sharing: PartyItemSharing,
     pub xp_sharing: PartyXpSharing,
+    pub level: i32,
+    pub experience: i32,
 }
 
 impl Default for PartyInfo {
@@ -26,6 +28,8 @@ impl Default for PartyInfo {
             members: Vec::new(),
             item_sharing: PartyItemSharing::EqualLootDistribution,
             xp_sharing: PartyXpSharing::EqualShare,
+            level: 1,
+            experience: 0,
         }
     }
 }

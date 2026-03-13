@@ -24,7 +24,7 @@ use bevy::{
     tasks::IoTaskPool,
 };
 use bevy_rapier3d::prelude::{
-    AsyncCollider, Collider, CollisionGroups, ComputedColliderShape, RigidBody,
+    AsyncCollider, Collider, CollisionGroups, ComputedColliderShape, Group, RigidBody,
 };
 use log::warn;
 use thiserror::Error;
@@ -32,8 +32,8 @@ use thiserror::Error;
 use rose_data::{NpcId, SkyboxData, WarpGateId, ZoneId, ZoneList};
 use rose_file_readers::{
     HimFile, IfoEffectObject, IfoFile, IfoObject, IfoSoundObject, LitFile, LitObject, RoseFile,
-    RoseFileReader, StbFile, TilFile, ZonFile, ZonTileRotation, ZscCollisionFlags, ZscEffectType,
-    ZscFile,
+    RoseFileReader, StbFile, TilFile, ZonFile, ZonTileRotation, ZscCollisionFlags,
+    ZscCollisionShape, ZscEffectType, ZscFile,
 };
 
 use crate::{
@@ -42,10 +42,10 @@ use crate::{
     components::{
         ColliderParent, EventObject, NightTimeEffect, WarpObject, Zone, ZoneObject,
         ZoneObjectAnimatedObject, ZoneObjectId, ZoneObjectPart, ZoneObjectTerrain,
-        COLLISION_FILTER_CLICKABLE, COLLISION_FILTER_COLLIDABLE, COLLISION_FILTER_INSPECTABLE,
-        COLLISION_FILTER_MOVEABLE, COLLISION_GROUP_PHYSICS_TOY, COLLISION_GROUP_ZONE_EVENT_OBJECT,
-        COLLISION_GROUP_ZONE_OBJECT, COLLISION_GROUP_ZONE_TERRAIN,
-        COLLISION_GROUP_ZONE_WARP_OBJECT, COLLISION_GROUP_ZONE_WATER,
+        COLLISION_FILTER_CLICKABLE, COLLISION_FILTER_COLLIDABLE, COLLISION_FILTER_GROUND_SUPPORT,
+        COLLISION_FILTER_INSPECTABLE, COLLISION_FILTER_MOVEABLE, COLLISION_GROUP_PHYSICS_TOY,
+        COLLISION_GROUP_ZONE_EVENT_OBJECT, COLLISION_GROUP_ZONE_OBJECT,
+        COLLISION_GROUP_ZONE_TERRAIN, COLLISION_GROUP_ZONE_WARP_OBJECT, COLLISION_GROUP_ZONE_WATER,
     },
     effect_loader::{decode_blend_factor, decode_blend_op, spawn_effect},
     events::{LoadZoneEvent, ZoneEvent},
@@ -1135,7 +1135,6 @@ fn spawn_object(
         GlobalTransform::default(),
         Visibility::default(),
         ComputedVisibility::default(),
-        RigidBody::Fixed,
     ));
 
     let object_entity = object_entity_commands.id();
@@ -1225,34 +1224,11 @@ fn spawn_object(
                 handle
             });
 
-            let mut collision_filter = COLLISION_FILTER_INSPECTABLE;
-
-            if object_part.collision_shape.is_some() {
-                if collision_group != COLLISION_GROUP_ZONE_EVENT_OBJECT
-                    && collision_group != COLLISION_GROUP_ZONE_WARP_OBJECT
-                    && !object_part
-                        .collision_flags
-                        .contains(ZscCollisionFlags::HEIGHT_ONLY)
-                {
-                    collision_filter |= COLLISION_FILTER_COLLIDABLE | COLLISION_GROUP_PHYSICS_TOY;
-                }
-
-                if collision_group != COLLISION_GROUP_ZONE_WARP_OBJECT {
-                    if !object_part
-                        .collision_flags
-                        .contains(ZscCollisionFlags::NOT_PICKABLE)
-                    {
-                        collision_filter |= COLLISION_FILTER_CLICKABLE;
-                    }
-
-                    if !object_part
-                        .collision_flags
-                        .contains(ZscCollisionFlags::NOT_MOVEABLE)
-                    {
-                        collision_filter |= COLLISION_FILTER_MOVEABLE;
-                    }
-                }
-            }
+            let collision_filter = zone_object_collision_filter(
+                collision_group,
+                object_part.collision_shape,
+                object_part.collision_flags,
+            );
 
             let mut part_commands = object_commands.spawn((
                 part_object_type(ZoneObjectPart {
@@ -1263,7 +1239,8 @@ fn spawn_object(
                     // collision_shape.is_none(): cannot be hit with any raycast
                     // collision_shape.is_some(): can be hit with forward raycast
                     collision_shape: (&object_part.collision_shape).into(),
-                    // collision_not_moveable: does not hit downwards ray cast, but can hit forwards ray cast
+                    // Preserves the original non-moveable flag, but ground support now uses a
+                    // separate filter so these parts can still be stood on.
                     collision_not_moveable: object_part
                         .collision_flags
                         .contains(ZscCollisionFlags::NOT_MOVEABLE),
@@ -1287,10 +1264,16 @@ fn spawn_object(
                 Visibility::default(),
                 ComputedVisibility::default(),
                 NotShadowCaster,
-                ColliderParent::new(object_entity),
-                AsyncCollider(ComputedColliderShape::TriMesh),
-                CollisionGroups::new(collision_group, collision_filter),
             ));
+
+            if let Some(collision_filter) = collision_filter {
+                part_commands.insert((
+                    ColliderParent::new(object_entity),
+                    RigidBody::Fixed,
+                    AsyncCollider(ComputedColliderShape::TriMesh),
+                    CollisionGroups::new(collision_group, collision_filter),
+                ));
+            }
 
             let active_motion = object_part.animation_path.as_ref().map(|animation_path| {
                 TransformAnimation::repeat(asset_server.load(animation_path.path()), None)
@@ -1495,6 +1478,102 @@ fn spawn_effect_object(
     );
 
     effect_object_entity
+}
+
+fn zone_object_collision_filter(
+    collision_group: Group,
+    collision_shape: Option<ZscCollisionShape>,
+    collision_flags: ZscCollisionFlags,
+) -> Option<Group> {
+    let collision_shape = collision_shape?;
+    let mut filter = COLLISION_FILTER_INSPECTABLE;
+    let is_passthrough = collision_flags.contains(ZscCollisionFlags::PASSTHROUGH);
+
+    if collision_group != COLLISION_GROUP_ZONE_WARP_OBJECT && !is_passthrough {
+        filter |= COLLISION_FILTER_GROUND_SUPPORT;
+    }
+
+    if collision_group != COLLISION_GROUP_ZONE_EVENT_OBJECT
+        && collision_group != COLLISION_GROUP_ZONE_WARP_OBJECT
+        && !collision_flags.contains(ZscCollisionFlags::HEIGHT_ONLY)
+        && !is_passthrough
+        && matches!(collision_shape, ZscCollisionShape::Polygon)
+    {
+        filter |= COLLISION_FILTER_COLLIDABLE | COLLISION_GROUP_PHYSICS_TOY;
+    }
+
+    if collision_group != COLLISION_GROUP_ZONE_WARP_OBJECT {
+        if !collision_flags.contains(ZscCollisionFlags::NOT_PICKABLE) {
+            filter |= COLLISION_FILTER_CLICKABLE;
+        }
+
+        if !collision_flags.contains(ZscCollisionFlags::NOT_MOVEABLE) {
+            filter |= COLLISION_FILTER_MOVEABLE;
+        }
+    }
+
+    Some(filter)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::zone_object_collision_filter;
+    use crate::components::{
+        COLLISION_FILTER_COLLIDABLE, COLLISION_FILTER_GROUND_SUPPORT, COLLISION_GROUP_ZONE_OBJECT,
+        COLLISION_GROUP_ZONE_WARP_OBJECT,
+    };
+    use rose_file_readers::{ZscCollisionFlags, ZscCollisionShape};
+
+    #[test]
+    fn polygon_not_moveable_still_supports_ground() {
+        let filter = zone_object_collision_filter(
+            COLLISION_GROUP_ZONE_OBJECT,
+            Some(ZscCollisionShape::Polygon),
+            ZscCollisionFlags::NOT_MOVEABLE,
+        )
+        .unwrap();
+
+        assert!(filter.contains(COLLISION_FILTER_COLLIDABLE));
+        assert!(filter.contains(COLLISION_FILTER_GROUND_SUPPORT));
+    }
+
+    #[test]
+    fn height_only_still_supports_ground_without_forward_collision() {
+        let filter = zone_object_collision_filter(
+            COLLISION_GROUP_ZONE_OBJECT,
+            Some(ZscCollisionShape::Polygon),
+            ZscCollisionFlags::HEIGHT_ONLY,
+        )
+        .unwrap();
+
+        assert!(!filter.contains(COLLISION_FILTER_COLLIDABLE));
+        assert!(filter.contains(COLLISION_FILTER_GROUND_SUPPORT));
+    }
+
+    #[test]
+    fn passthrough_has_no_ground_support_or_forward_collision() {
+        let filter = zone_object_collision_filter(
+            COLLISION_GROUP_ZONE_OBJECT,
+            Some(ZscCollisionShape::Polygon),
+            ZscCollisionFlags::PASSTHROUGH,
+        )
+        .unwrap();
+
+        assert!(!filter.contains(COLLISION_FILTER_COLLIDABLE));
+        assert!(!filter.contains(COLLISION_FILTER_GROUND_SUPPORT));
+    }
+
+    #[test]
+    fn warp_objects_do_not_gain_ground_support() {
+        let filter = zone_object_collision_filter(
+            COLLISION_GROUP_ZONE_WARP_OBJECT,
+            Some(ZscCollisionShape::Polygon),
+            ZscCollisionFlags::empty(),
+        )
+        .unwrap();
+
+        assert!(!filter.contains(COLLISION_FILTER_GROUND_SUPPORT));
+    }
 }
 
 fn spawn_sound_object(

@@ -3,7 +3,11 @@
 
 use animation::RoseAnimationPlugin;
 use bevy::{
-    core_pipeline::{bloom::BloomSettings, clear_color::ClearColor},
+    core_pipeline::{
+        bloom::BloomSettings,
+        clear_color::ClearColor,
+        fxaa::{Fxaa, Sensitivity},
+    },
     ecs::event::Events,
     log::Level,
     prelude::{
@@ -53,20 +57,20 @@ pub mod zone_loader;
 use audio::OddioPlugin;
 use events::{
     BankEvent, CharacterSelectEvent, ChatboxEvent, ClanDialogEvent, ClientEntityEvent,
-    ConversationDialogEvent, GameConnectionEvent, HitEvent, LoadZoneEvent, LoginEvent,
+    ConversationDialogEvent, CraftEvent, GameConnectionEvent, HitEvent, LoadZoneEvent, LoginEvent,
     MessageBoxEvent, MoveDestinationEffectEvent, NetworkEvent, NpcStoreEvent,
     NumberInputDialogEvent, PartyEvent, PersonalStoreEvent, PlayerCommandEvent, QuestTriggerEvent,
-    SpawnEffectEvent, SpawnProjectileEvent, SystemFuncEvent, UseItemEvent, WorldConnectionEvent,
-    ZoneEvent,
+    SkillHitSoundEvent, SpawnEffectEvent, SpawnProjectileEvent, SystemFuncEvent, UseItemEvent,
+    WorldChatBubbleEvent, WorldConnectionEvent, ZoneEvent,
 };
 use model_loader::ModelLoader;
 use render::{DamageDigitMaterial, RoseRenderPlugin};
 use resources::{
     load_ui_resources, run_network_thread, ui_requested_cursor_apply_system, update_ui_resources,
-    AppState, ClientEntityList, DamageDigitsSpawner, DebugRenderConfig, GameData, NameTagSettings,
-    NetworkThread, NetworkThreadMessage, PendingClanInvites, RenderConfiguration, SelectedTarget,
-    ServerConfiguration, SoundCache, SoundSettings, SpecularTexture, VfsResource, WorldTime,
-    ZoneTime,
+    AppState, ClientEntityList, ConversationDialogState, DamageDigitsSpawner, DebugRenderConfig,
+    GameData, NameTagSettings, NetworkThread, NetworkThreadMessage, PendingClanInvites,
+    RenderConfiguration, SelectedTarget, ServerConfiguration, SocialState, SoundCache,
+    SoundSettings, SpecularTexture, VfsResource, WorldTime, ZoneTime,
 };
 use scripting::RoseScriptingPlugin;
 use systems::{
@@ -74,45 +78,46 @@ use systems::{
     background_music_system, character_model_add_collider_system, character_model_blink_system,
     character_model_update_system, character_select_enter_system, character_select_event_system,
     character_select_exit_system, character_select_input_system, character_select_models_system,
-    character_select_system, clan_system, client_entity_event_system, collision_height_only_system,
-    collision_player_system, collision_player_system_join_zoin, command_system,
-    conversation_dialog_system, cooldown_system, damage_digit_render_system,
-    debug_render_collider_system, debug_render_directional_light_system,
-    debug_render_skeleton_system, directional_light_system, effect_system, facing_direction_system,
-    free_camera_system, game_connection_system, game_mouse_input_system, game_state_enter_system,
-    game_zone_change_system, hit_event_system, item_drop_model_add_collider_system,
-    item_drop_model_system, login_connection_system, login_event_system, login_state_enter_system,
-    login_state_exit_system, login_system, model_viewer_enter_system, model_viewer_exit_system,
-    model_viewer_system, move_destination_effect_system, name_tag_system,
-    name_tag_update_color_system, name_tag_update_healthbar_system, name_tag_vehicle_height_system,
-    name_tag_visibility_system,
+    character_select_system, chat_bubble_system, chat_bubble_vehicle_height_system, clan_system,
+    client_entity_event_system, collision_height_only_system, collision_player_system,
+    collision_player_system_join_zoin, command_system, conversation_dialog_system, cooldown_system,
+    damage_digit_render_system, debug_render_collider_system,
+    debug_render_directional_light_system, debug_render_skeleton_system, directional_light_system,
+    effect_system, facing_direction_system, free_camera_system, game_connection_system,
+    game_mouse_input_system, game_state_enter_system, game_zone_change_system, hit_event_system,
+    item_drop_model_add_collider_system, item_drop_model_system, login_connection_system,
+    login_event_system, login_state_enter_system, login_state_exit_system, login_system,
+    model_viewer_enter_system, model_viewer_exit_system, model_viewer_system,
+    move_destination_effect_system, name_tag_system, name_tag_update_color_system,
+    name_tag_update_healthbar_system, name_tag_vehicle_height_system, name_tag_visibility_system,
     network_thread_system, npc_idle_sound_system, npc_model_add_collider_system,
     npc_model_update_system, orbit_camera_system, particle_sequence_system,
     passive_recovery_system, pending_damage_system, pending_skill_effect_system,
     personal_store_model_add_collider_system, personal_store_model_system, player_command_system,
-    projectile_system, quest_trigger_system, spawn_effect_system, spawn_projectile_system,
-    status_effect_system, system_func_event_system, update_position_system, use_item_event_system,
-    vehicle_model_system, vehicle_sound_system, visible_status_effects_system,
-    world_connection_system, world_time_system, zone_time_system, zone_viewer_enter_system,
-    DebugInspectorPlugin,
+    projectile_system, quest_trigger_system, skill_hit_sound_system, spawn_effect_system,
+    spawn_projectile_system, status_effect_system, stealth_visibility_system,
+    system_func_event_system, update_position_system, use_item_event_system, vehicle_model_system,
+    vehicle_sound_system, visible_status_effects_system, world_connection_system,
+    world_time_system, zone_time_system, zone_viewer_enter_system, DebugInspectorPlugin,
 };
 use ui::{
     load_dialog_sprites_system, ui_bank_system, ui_character_create_system,
     ui_character_info_system, ui_character_select_name_tag_system, ui_character_select_system,
-    ui_chatbox_system, ui_clan_invite_system, ui_clan_system, ui_create_clan_system, ui_debug_camera_info_system,
-    ui_debug_client_entity_list_system, ui_debug_command_viewer_system,
-    ui_debug_diagnostics_system, ui_debug_dialog_list_system, ui_debug_effect_list_system,
-    ui_debug_entity_inspector_system, ui_debug_item_list_system, ui_debug_menu_system,
-    ui_debug_npc_list_system, ui_debug_physics_system, ui_debug_render_system,
-    ui_debug_skill_list_system, ui_debug_zone_lighting_system, ui_debug_zone_list_system,
-    ui_debug_zone_time_system, ui_drag_and_drop_system, ui_game_menu_system, ui_hotbar_system,
-    ui_inventory_system, ui_item_browser_system, ui_item_drop_name_system, ui_login_system,
-    ui_message_box_system, ui_minimap_system, ui_npc_store_system, ui_number_input_dialog_system,
-    ui_party_option_system, ui_party_system, ui_personal_store_system, ui_player_info_system,
-    ui_player_shop_system, ui_quest_list_system, ui_respawn_system, ui_selected_target_system,
-    ui_server_select_system, ui_settings_system, ui_skill_list_system, ui_skill_tree_system,
-    ui_sound_event_system, ui_status_effects_system, ui_window_sound_system, widgets::Dialog,
-    DialogLoader, UiSoundEvent, UiStateDebugWindows, UiStateDragAndDrop, UiStateWindows,
+    ui_chatbox_system, ui_clan_invite_system, ui_clan_system, ui_community_system, ui_craft_system,
+    ui_create_clan_system, ui_debug_camera_info_system, ui_debug_client_entity_list_system,
+    ui_debug_command_viewer_system, ui_debug_diagnostics_system, ui_debug_dialog_list_system,
+    ui_debug_effect_list_system, ui_debug_entity_inspector_system, ui_debug_item_list_system,
+    ui_debug_menu_system, ui_debug_npc_list_system, ui_debug_physics_system,
+    ui_debug_render_system, ui_debug_skill_list_system, ui_debug_zone_lighting_system,
+    ui_debug_zone_list_system, ui_debug_zone_time_system, ui_drag_and_drop_system,
+    ui_game_menu_system, ui_hotbar_system, ui_inventory_system, ui_item_browser_system,
+    ui_item_drop_name_system, ui_login_system, ui_message_box_system, ui_minimap_system,
+    ui_npc_store_system, ui_number_input_dialog_system, ui_party_option_system, ui_party_system,
+    ui_personal_store_system, ui_player_info_system, ui_player_shop_system, ui_quest_list_system,
+    ui_respawn_system, ui_selected_target_system, ui_server_select_system, ui_settings_system,
+    ui_skill_list_system, ui_skill_tree_system, ui_sound_event_system, ui_status_effects_system,
+    ui_window_sound_system, widgets::Dialog, DialogLoader, UiSoundEvent, UiStateDebugWindows,
+    UiStateDragAndDrop, UiStateWindows,
 };
 use vfs_asset_io::VfsAssetIo;
 use zms_asset_loader::{ZmsAssetLoader, ZmsMaterialNumFaces, ZmsNoSkinAssetLoader};
@@ -234,6 +239,10 @@ impl FilesystemConfig {
             }
         }
 
+        // Device precedence is last-defined-wins so override directories can be listed
+        // after base VFS sources in config/CLI and still take priority.
+        vfs_devices.reverse();
+
         if vfs_devices.is_empty() {
             None
         } else {
@@ -285,6 +294,22 @@ pub enum GraphicsModeConfig {
     Fullscreen,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AntiAliasConfig {
+    None,
+    #[serde(rename = "msaa")]
+    Msaa,
+    #[serde(rename = "fxaa")]
+    Fxaa,
+}
+
+impl Default for AntiAliasConfig {
+    fn default() -> Self {
+        AntiAliasConfig::Msaa
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(default)]
 pub struct GraphicsConfig {
@@ -292,6 +317,7 @@ pub struct GraphicsConfig {
     pub passthrough_terrain_textures: bool,
     pub trail_effect_duration_multiplier: f32,
     pub disable_vsync: bool,
+    pub anti_aliasing: AntiAliasConfig,
 }
 
 impl Default for GraphicsConfig {
@@ -301,6 +327,7 @@ impl Default for GraphicsConfig {
             passthrough_terrain_textures: false,
             trail_effect_duration_multiplier: 1.0,
             disable_vsync: false,
+            anti_aliasing: AntiAliasConfig::default(),
         }
     }
 }
@@ -470,7 +497,11 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
     .insert_resource(AssetServer::new(VfsAssetIo::new(virtual_filesystem)));
 
     // Initialise bevy engine
-    app.insert_resource(Msaa::Sample4)
+    let msaa = match config.graphics.anti_aliasing {
+        AntiAliasConfig::Msaa => Msaa::Sample4,
+        _ => Msaa::Off,
+    };
+    app.insert_resource(msaa)
         .insert_resource(ClearColor(Color::rgb(0.70, 0.90, 1.0)))
         .insert_resource(bevy::gizmos::GizmoConfig {
             depth_bias: -0.1,
@@ -482,6 +513,15 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
                     wgpu_settings: WgpuSettings {
                         features: WgpuFeatures::TEXTURE_COMPRESSION_BC,
                         // backends: Some(Backends::DX12),
+                        ..Default::default()
+                    },
+                })
+                .set(bevy::render::texture::ImagePlugin {
+                    default_sampler: bevy::render::render_resource::SamplerDescriptor {
+                        mag_filter: bevy::render::render_resource::FilterMode::Linear,
+                        min_filter: bevy::render::render_resource::FilterMode::Linear,
+                        mipmap_filter: bevy::render::render_resource::FilterMode::Linear,
+                        anisotropy_clamp: 16,
                         ..Default::default()
                     },
                 })
@@ -548,6 +588,7 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
         .insert_resource(RenderConfiguration {
             passthrough_terrain_textures: config.graphics.passthrough_terrain_textures,
             trail_effect_duration_multiplier: config.graphics.trail_effect_duration_multiplier,
+            anti_aliasing: config.graphics.anti_aliasing,
         })
         .insert_resource(ServerConfiguration {
             ip: config.server.ip.clone(),
@@ -585,10 +626,12 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
 
     app.add_event::<BankEvent>()
         .add_event::<ChatboxEvent>()
+        .add_event::<WorldChatBubbleEvent>()
         .add_event::<CharacterSelectEvent>()
         .add_event::<ClanDialogEvent>()
         .add_event::<ClientEntityEvent>()
         .add_event::<ConversationDialogEvent>()
+        .add_event::<CraftEvent>()
         .add_event::<GameConnectionEvent>()
         .add_event::<HitEvent>()
         .add_event::<LoginEvent>()
@@ -602,6 +645,7 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
         .add_event::<PersonalStoreEvent>()
         .add_event::<PlayerCommandEvent>()
         .add_event::<QuestTriggerEvent>()
+        .add_event::<SkillHitSoundEvent>()
         .add_event::<SystemFuncEvent>()
         .add_event::<SpawnEffectEvent>()
         .add_event::<SpawnProjectileEvent>()
@@ -661,6 +705,7 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
                     .after(pending_skill_effect_system)
                     .after(projectile_system)
                     .before(spawn_effect_system),
+                skill_hit_sound_system.after(hit_event_system),
                 damage_digit_render_system
                     .after(pending_damage_system)
                     .after(hit_event_system),
@@ -673,6 +718,7 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
                 spawn_effect_system,
                 move_destination_effect_system.after(game_mouse_input_system),
                 npc_idle_sound_system,
+                chat_bubble_system,
                 name_tag_system,
                 name_tag_visibility_system.after(game_mouse_input_system),
                 name_tag_update_color_system,
@@ -737,6 +783,10 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
     // character_model_blink_system in PostUpdate to avoid any conflicts with model destruction
     // e.g. through the character select exit system.
     app.add_systems(PostUpdate, character_model_blink_system);
+    app.add_systems(
+        PostUpdate,
+        systems::zone_collider_scale_fix_system.after(PhysicsSet::Writeback),
+    );
 
     // vehicle_model_system in after ::Update but before ::PostUpdate to avoid any conflicts,
     // with model destruction but to also be before global transform is calculated.
@@ -750,7 +800,10 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
     // Update name tag height when entering/exiting a vehicle (e.g. castle gear)
     app.add_systems(
         PostUpdate,
-        name_tag_vehicle_height_system
+        (
+            name_tag_vehicle_height_system,
+            chat_bubble_vehicle_height_system,
+        )
             .after(vehicle_model_system)
             .in_set(GameStages::AfterUpdate),
     );
@@ -850,12 +903,14 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
         .init_resource::<UiStateWindows>()
         .init_resource::<UiStateDebugWindows>()
         .init_resource::<ClientEntityList>()
+        .init_resource::<ConversationDialogState>()
         .init_resource::<DebugRenderConfig>()
         .init_resource::<WorldTime>()
         .init_resource::<ZoneTime>()
         .init_resource::<SelectedTarget>()
         .init_resource::<NameTagSettings>()
-        .init_resource::<PendingClanInvites>();
+        .init_resource::<PendingClanInvites>()
+        .init_resource::<SocialState>();
 
     app.add_systems(OnEnter(AppState::Game), game_state_enter_system);
 
@@ -879,6 +934,12 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
             client_entity_event_system.before(spawn_effect_system),
             use_item_event_system.before(spawn_effect_system),
             status_effect_system,
+            stealth_visibility_system
+                .after(character_model_update_system)
+                .after(npc_model_update_system)
+                .after(status_effect_system)
+                .before(GameSystemSets::Ui)
+                .before(game_mouse_input_system),
             passive_recovery_system,
             quest_trigger_system,
             game_mouse_input_system.after(GameSystemSets::Ui),
@@ -894,6 +955,8 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
                 ui_chatbox_system,
                 ui_character_info_system,
                 ui_clan_system,
+                ui_community_system,
+                ui_craft_system,
                 ui_create_clan_system,
                 ui_inventory_system,
                 ui_item_browser_system,
@@ -916,10 +979,7 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
                 ui_skill_tree_system,
                 ui_settings_system,
             ),
-            (
-                ui_status_effects_system,
-                conversation_dialog_system,
-            ),
+            (ui_status_effects_system, conversation_dialog_system),
         )
             .run_if(in_state(AppState::Game))
             .in_set(UiSystemSets::Ui),
@@ -1065,6 +1125,10 @@ fn load_game_data_irose(
         )
         .expect("Failed to load character motion list"),
     );
+    let zones = Arc::new(
+        rose_data_irose::get_zone_database(&vfs_resource.vfs, string_database.clone())
+            .expect("Failed to load zone database"),
+    );
     let zone_list = Arc::new(
         rose_data_irose::get_zone_list(&vfs_resource.vfs, string_database.clone())
             .expect("Failed to load zone list"),
@@ -1097,6 +1161,10 @@ fn load_game_data_irose(
                 .expect("Failed to load job class database"),
         ),
         npcs,
+        products: Arc::new(
+            rose_data_irose::get_product_database(&vfs_resource.vfs)
+                .expect("Failed to load product database"),
+        ),
         quests: Arc::new(
             rose_data_irose::get_quest_database(&vfs_resource.vfs, string_database.clone())
                 .expect("Failed to load quest database"),
@@ -1110,6 +1178,7 @@ fn load_game_data_irose(
                 .expect("Failed to load status effect database"),
         ),
         string_database,
+        zones,
         zone_list,
         ltb_event: vfs_resource
             .vfs
@@ -1127,6 +1196,10 @@ fn load_game_data_irose(
             .vfs
             .read_file::<StbFile, _>("3DDATA/STB/LIST_MORPH_OBJECT.STB")
             .expect("Failed to load 3DDATA/STB/LIST_MORPH_OBJECT.STB"),
+        stb_union: vfs_resource
+            .vfs
+            .read_file::<StbFile, _>("3DDATA/STB/LIST_UNION.STB")
+            .expect("Failed to load 3DDATA/STB/LIST_UNION.STB"),
         character_select_positions: vec![
             Transform::from_translation(Vec3::new(5205.0, 1.0, -5205.0))
                 .with_rotation(Quat::from_xyzw(0.0, 1.0, 0.0, 0.0))
@@ -1154,6 +1227,7 @@ fn load_common_game_data(
     asset_server: Res<AssetServer>,
     mut damage_digit_materials: ResMut<Assets<DamageDigitMaterial>>,
     mut egui_context: EguiContexts,
+    render_config: Res<RenderConfiguration>,
 ) {
     commands.insert_resource(SpecularTexture {
         image: asset_server.load("ETC/SPECULAR_SPHEREMAP.DDS"),
@@ -1172,16 +1246,26 @@ fn load_common_game_data(
         .expect("Failed to create model loader"),
     );
 
-    commands.spawn((
-        Camera3dBundle {
-            camera: Camera {
-                hdr: false,
+    let camera_entity = commands
+        .spawn((
+            Camera3dBundle {
+                camera: Camera {
+                    hdr: false,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            ..Default::default()
-        },
-        BloomSettings::NATURAL,
-    ));
+            BloomSettings::NATURAL,
+        ))
+        .id();
+
+    if render_config.anti_aliasing == AntiAliasConfig::Fxaa {
+        commands.entity(camera_entity).insert(Fxaa {
+            enabled: true,
+            edge_threshold: Sensitivity::High,
+            edge_threshold_min: Sensitivity::High,
+        });
+    }
 
     commands.insert_resource(DamageDigitsSpawner::load(
         &asset_server,

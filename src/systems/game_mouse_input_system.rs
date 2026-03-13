@@ -11,7 +11,7 @@ use bevy::{
 use bevy_egui::EguiContexts;
 use bevy_rapier3d::prelude::{CollisionGroups, QueryFilter, RapierContext};
 
-use rose_game_common::components::{ItemDrop, Team};
+use rose_game_common::components::{ItemDrop, StatusEffects, Team};
 
 use crate::{
     components::{
@@ -20,6 +20,7 @@ use crate::{
     },
     events::{MoveDestinationEffectEvent, PlayerCommandEvent},
     resources::{SelectedTarget, UiCursorType, UiRequestedCursor},
+    systems::stealth_visibility_system::is_hidden_from_local_player,
 };
 
 #[derive(WorldQuery)]
@@ -40,6 +41,7 @@ pub fn game_mouse_input_system(
         Option<&Team>,
         Option<&Position>,
         Option<&ItemDrop>,
+        Option<&StatusEffects>,
         Option<&ZoneObject>,
         Option<&ClientEntity>,
     )>,
@@ -80,15 +82,35 @@ pub fn game_mouse_input_system(
     };
 
     if let Some(ray) = camera.viewport_to_world(camera_transform, cursor_position) {
+        let raycast_predicate = |collider_entity: Entity| {
+            let hit_entity = query_collider_parent
+                .get(collider_entity)
+                .map_or(collider_entity, |collider_parent| collider_parent.entity);
+
+            query_hit_entity.get(hit_entity).ok().map_or(
+                true,
+                |(hit_team, _, _, hit_status_effects, _, _)| {
+                    !is_hidden_from_local_player(
+                        hit_status_effects,
+                        hit_team,
+                        player.team,
+                        hit_entity == player.entity,
+                    )
+                },
+            )
+        };
+
         if let Some((collider_entity, distance)) = rapier_context.cast_ray(
             ray.origin,
             ray.direction,
             10000000.0,
             false,
-            QueryFilter::new().groups(CollisionGroups::new(
-                COLLISION_FILTER_CLICKABLE,
-                !COLLISION_GROUP_PLAYER & !COLLISION_GROUP_PHYSICS_TOY,
-            )),
+            QueryFilter::new()
+                .groups(CollisionGroups::new(
+                    COLLISION_FILTER_CLICKABLE,
+                    !COLLISION_GROUP_PLAYER & !COLLISION_GROUP_PHYSICS_TOY,
+                ))
+                .predicate(&raycast_predicate),
         ) {
             let hit_position = ray.get_point(distance);
             let hit_entity = query_collider_parent
@@ -99,6 +121,7 @@ pub fn game_mouse_input_system(
                 hit_team,
                 hit_entity_position,
                 hit_item_drop,
+                _hit_status_effects,
                 hit_zone_object,
                 hit_client_entity,
             )) = query_hit_entity.get(hit_entity)
