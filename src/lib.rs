@@ -1285,4 +1285,8 @@ fn load_common_game_data(
         .insert(0, "Ubuntu-M".to_owned());
 
     egui_context.ctx_mut().set_fonts(fonts);
+
+    let mut style = (*egui_context.ctx_mut().style()).clone();
+    style.interaction.show_tooltips_only_when_still = false;
+    egui_context.ctx_mut().set_style(style);
 }

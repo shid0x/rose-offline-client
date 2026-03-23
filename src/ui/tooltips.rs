@@ -16,6 +16,36 @@ use rose_game_common::components::{
 use crate::{bundles::ability_values_get_value, components::SummonPoints, resources::GameData};
 
 const TOOLTIP_MAX_WIDTH: f32 = 300.0;
+const POSITIVE_EFFECT_COLOR: egui::Color32 = egui::Color32::from_rgb(100, 200, 255);
+const NEGATIVE_EFFECT_COLOR: egui::Color32 = egui::Color32::RED;
+const TOOLTIP_KEY_COLOR: egui::Color32 = egui::Color32::from_rgb(130, 145, 195);
+
+fn get_effect_color(value: i32) -> egui::Color32 {
+    if value < 0 {
+        NEGATIVE_EFFECT_COLOR
+    } else {
+        POSITIVE_EFFECT_COLOR
+    }
+}
+
+fn get_skill_add_ability_color(skill_add_ability: &SkillAddAbility) -> egui::Color32 {
+    if skill_add_ability.value < 0 || skill_add_ability.rate < 0 {
+        NEGATIVE_EFFECT_COLOR
+    } else {
+        POSITIVE_EFFECT_COLOR
+    }
+}
+
+fn ability_type_suffix(ability_type: AbilityType) -> &'static str {
+    if matches!(
+        ability_type,
+        AbilityType::SaveMana | AbilityType::PassiveSaveMana
+    ) {
+        "%"
+    } else {
+        ""
+    }
+}
 
 #[derive(WorldQuery)]
 pub struct PlayerTooltipQuery<'w> {
@@ -100,13 +130,17 @@ fn add_equipment_item_life_durability(
     game_data: &GameData,
     equipment_item: &EquipmentItem,
 ) {
-    ui.label(format!(
-        "{}:{: >3}% {}:{: >3}",
-        game_data.client_strings.item_life,
-        (equipment_item.life + 9) / 10,
-        game_data.client_strings.item_durability,
-        equipment_item.durability
-    ));
+    ui.horizontal(|ui| {
+        let item_life = format!("{: >3}%", (equipment_item.life + 9) / 10);
+        add_label_key_value(ui, game_data.client_strings.item_life, &item_life);
+
+        let item_durability = format!("{: >3}", equipment_item.durability);
+        add_label_key_value(
+            ui,
+            game_data.client_strings.item_durability,
+            &item_durability,
+        );
+    });
 }
 
 fn add_item_defence(
@@ -115,38 +149,42 @@ fn add_item_defence(
     item_data: &BaseItemData,
     grade_data: Option<&ItemGradeData>,
 ) {
-    ui.label(format!(
-        "{}:{} {}:{}",
-        game_data
-            .string_database
-            .get_ability_type(AbilityType::Defence),
-        item_data.defence
+    ui.horizontal(|ui| {
+        let defence = item_data.defence
             + grade_data
                 .map(|grade_data| grade_data.defence as u32)
-                .unwrap_or(0),
-        game_data
-            .string_database
-            .get_ability_type(AbilityType::Resistance),
-        item_data.resistance
+                .unwrap_or(0);
+        add_label_key_value(
+            ui,
+            game_data
+                .string_database
+                .get_ability_type(AbilityType::Defence),
+            &defence.to_string(),
+        );
+
+        let resistance = item_data.resistance
             + grade_data
                 .map(|grade_data| grade_data.resistance as u32)
-                .unwrap_or(0)
-    ));
+                .unwrap_or(0);
+        add_label_key_value(
+            ui,
+            game_data
+                .string_database
+                .get_ability_type(AbilityType::Resistance),
+            &resistance.to_string(),
+        );
+    });
 }
 
 fn add_item_add_ability(ui: &mut egui::Ui, game_data: &GameData, item_data: &BaseItemData) {
     for &(ability_type, value) in item_data.add_ability.iter() {
         ui.colored_label(
-            egui::Color32::from_rgb(100, 200, 255),
+            get_effect_color(value),
             format!(
                 "[{} {}{}]",
                 game_data.string_database.get_ability_type(ability_type),
                 value,
-                if matches!(ability_type, AbilityType::SaveMana) {
-                    "%"
-                } else {
-                    ""
-                }
+                ability_type_suffix(ability_type)
             ),
         );
     }
@@ -177,17 +215,13 @@ fn add_equipment_item_add_appraisal(
                 if is_gem {
                     egui::Color32::YELLOW
                 } else {
-                    egui::Color32::from_rgb(100, 200, 255)
+                    get_effect_color(value)
                 },
                 format!(
                     "[{} {}{}]",
                     game_data.string_database.get_ability_type(ability_type),
                     value,
-                    if matches!(ability_type, AbilityType::SaveMana) {
-                        "%"
-                    } else {
-                        ""
-                    }
+                    ability_type_suffix(ability_type)
                 ),
             );
         }
@@ -283,11 +317,20 @@ fn add_item_equip_requirement(
 }
 
 fn add_item_description(ui: &mut egui::Ui, game_data: &GameData, item_data: &BaseItemData) {
-    ui.label(format!(
-        "{}:{}",
-        game_data.client_strings.item_weight, item_data.weight
-    ));
+    add_label_key_value(
+        ui,
+        game_data.client_strings.item_weight,
+        &item_data.weight.to_string(),
+    );
     ui.label(item_data.description);
+}
+
+fn add_label_key_value(ui: &mut egui::Ui, key: &str, value: &str) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        ui.colored_label(TOOLTIP_KEY_COLOR, format!("{}: ", key));
+        ui.label(value);
+    });
 }
 
 pub fn ui_add_item_tooltip(
@@ -327,13 +370,18 @@ pub fn ui_add_item_tooltip(
                         + equipment_item.durability as f32 * 0.8
                         + grade_data.map(|grade| grade.hit).unwrap_or(0) as f32;
 
-                    ui.label(format!(
-                        "{}:{} {}:{}",
-                        game_data.client_strings.item_class,
-                        game_data.string_database.get_item_class(item_data.class),
-                        game_data.string_database.get_ability_type(AbilityType::Hit),
-                        hit_rate as i32
-                    ));
+                    ui.horizontal(|ui| {
+                        add_label_key_value(
+                            ui,
+                            game_data.client_strings.item_class,
+                            game_data.string_database.get_item_class(item_data.class),
+                        );
+                        add_label_key_value(
+                            ui,
+                            game_data.string_database.get_ability_type(AbilityType::Hit),
+                            &(hit_rate as i32).to_string(),
+                        );
+                    });
 
                     add_equipment_item_life_durability(ui, game_data, equipment_item);
 
@@ -341,53 +389,77 @@ pub fn ui_add_item_tooltip(
                         + grade_data.map(|grade| grade.attack).unwrap_or(0);
                     match weapon_item_data.attack_speed.cmp(&12) {
                         Ordering::Less => {
-                            ui.label(format!(
-                                "{}:{} {}:{} +{}",
-                                game_data
-                                    .string_database
-                                    .get_ability_type(AbilityType::Attack),
-                                attack_power,
-                                game_data
-                                    .string_database
-                                    .get_ability_type(AbilityType::AttackSpeed),
-                                game_data.client_strings.item_attack_speed_fast,
-                                12 - weapon_item_data.attack_speed
-                            ));
+                            ui.horizontal(|ui| {
+                                add_label_key_value(
+                                    ui,
+                                    game_data
+                                        .string_database
+                                        .get_ability_type(AbilityType::Attack),
+                                    &attack_power.to_string(),
+                                );
+                                let attack_speed = format!(
+                                    "{} +{}",
+                                    game_data.client_strings.item_attack_speed_fast,
+                                    12 - weapon_item_data.attack_speed,
+                                );
+                                add_label_key_value(
+                                    ui,
+                                    game_data
+                                        .string_database
+                                        .get_ability_type(AbilityType::AttackSpeed),
+                                    &attack_speed,
+                                );
+                            });
                         }
                         Ordering::Equal => {
-                            ui.label(format!(
-                                "{}:{} {}:{}",
-                                game_data
-                                    .string_database
-                                    .get_ability_type(AbilityType::Attack),
-                                attack_power,
-                                game_data
-                                    .string_database
-                                    .get_ability_type(AbilityType::AttackSpeed),
-                                game_data.client_strings.item_attack_speed_normal,
-                            ));
+                            ui.horizontal(|ui| {
+                                add_label_key_value(
+                                    ui,
+                                    game_data
+                                        .string_database
+                                        .get_ability_type(AbilityType::Attack),
+                                    &attack_power.to_string(),
+                                );
+                                add_label_key_value(
+                                    ui,
+                                    game_data
+                                        .string_database
+                                        .get_ability_type(AbilityType::AttackSpeed),
+                                    game_data.client_strings.item_attack_speed_normal,
+                                );
+                            });
                         }
                         Ordering::Greater => {
-                            ui.label(format!(
-                                "{}:{} {}:{} -{}",
-                                game_data
-                                    .string_database
-                                    .get_ability_type(AbilityType::Attack),
-                                attack_power,
-                                game_data
-                                    .string_database
-                                    .get_ability_type(AbilityType::AttackSpeed),
-                                game_data.client_strings.item_attack_speed_slow,
-                                weapon_item_data.attack_speed - 12
-                            ));
+                            ui.horizontal(|ui| {
+                                add_label_key_value(
+                                    ui,
+                                    game_data
+                                        .string_database
+                                        .get_ability_type(AbilityType::Attack),
+                                    &attack_power.to_string(),
+                                );
+                                let attack_speed = format!(
+                                    "{} -{}",
+                                    game_data.client_strings.item_attack_speed_slow,
+                                    weapon_item_data.attack_speed - 12,
+                                );
+                                add_label_key_value(
+                                    ui,
+                                    game_data
+                                        .string_database
+                                        .get_ability_type(AbilityType::AttackSpeed),
+                                    &attack_speed,
+                                );
+                            });
                         }
                     }
 
-                    ui.label(format!(
-                        "{}:{}M",
+                    let attack_range = format!("{}m", weapon_item_data.attack_range / 100);
+                    add_label_key_value(
+                        ui,
                         game_data.client_strings.item_attack_range,
-                        weapon_item_data.attack_range / 100
-                    ));
+                        &attack_range,
+                    );
 
                     add_item_add_ability(ui, game_data, item_data);
                     add_equipment_item_add_appraisal(ui, game_data, equipment_item);
@@ -401,23 +473,33 @@ pub fn ui_add_item_tooltip(
                         let avoid_rate = equipment_item.durability as f32 * 0.3
                             + grade_data.map(|grade| grade.avoid).unwrap_or(0) as f32;
 
-                        ui.label(format!(
-                            "{}:{} {}:{}",
-                            game_data.client_strings.item_class,
-                            game_data.string_database.get_item_class(item_data.class),
-                            game_data
-                                .string_database
-                                .get_ability_type(AbilityType::Avoid),
-                            avoid_rate as i32
-                        ));
+                        ui.horizontal(|ui| {
+                            add_label_key_value(
+                                ui,
+                                game_data.client_strings.item_class,
+                                game_data.string_database.get_item_class(item_data.class),
+                            );
+                            add_label_key_value(
+                                ui,
+                                game_data
+                                    .string_database
+                                    .get_ability_type(AbilityType::Avoid),
+                                &(avoid_rate as i32).to_string(),
+                            );
+                        });
                     } else {
-                        ui.label(format!(
-                            "{}:{} {}:{}",
-                            game_data.client_strings.item_class,
-                            game_data.string_database.get_item_class(item_data.class),
-                            game_data.client_strings.item_quality,
-                            item_data.quality
-                        ));
+                        ui.horizontal(|ui| {
+                            add_label_key_value(
+                                ui,
+                                game_data.client_strings.item_class,
+                                game_data.string_database.get_item_class(item_data.class),
+                            );
+                            add_label_key_value(
+                                ui,
+                                game_data.client_strings.item_quality,
+                                &item_data.quality.to_string(),
+                            );
+                        });
                     }
 
                     add_equipment_item_life_durability(ui, game_data, equipment_item);
@@ -440,26 +522,36 @@ pub fn ui_add_item_tooltip(
                     let grade_data = game_data.items.get_item_grade(equipment_item.grade);
 
                     if matches!(equipment_item.item.item_type, ItemType::Face) {
-                        ui.label(format!(
-                            "{}:{} {}:{}",
-                            game_data.client_strings.item_class,
-                            game_data.string_database.get_item_class(item_data.class),
-                            game_data.client_strings.item_quality,
-                            item_data.quality
-                        ));
+                        ui.horizontal(|ui| {
+                            add_label_key_value(
+                                ui,
+                                game_data.client_strings.item_class,
+                                game_data.string_database.get_item_class(item_data.class),
+                            );
+                            add_label_key_value(
+                                ui,
+                                game_data.client_strings.item_quality,
+                                &item_data.quality.to_string(),
+                            );
+                        });
                     } else {
                         let avoid_rate = equipment_item.durability as f32 * 0.3
                             + grade_data.map(|grade| grade.avoid).unwrap_or(0) as f32;
 
-                        ui.label(format!(
-                            "{}:{} {}:{}",
-                            game_data.client_strings.item_class,
-                            game_data.string_database.get_item_class(item_data.class),
-                            game_data
-                                .string_database
-                                .get_ability_type(AbilityType::Avoid),
-                            avoid_rate as i32
-                        ));
+                        ui.horizontal(|ui| {
+                            add_label_key_value(
+                                ui,
+                                game_data.client_strings.item_class,
+                                game_data.string_database.get_item_class(item_data.class),
+                            );
+                            add_label_key_value(
+                                ui,
+                                game_data
+                                    .string_database
+                                    .get_ability_type(AbilityType::Avoid),
+                                &(avoid_rate as i32).to_string(),
+                            );
+                        });
                     }
 
                     add_equipment_item_life_durability(ui, game_data, equipment_item);
@@ -471,10 +563,13 @@ pub fn ui_add_item_tooltip(
                             .get_feet_item(equipment_item.item.item_number)
                             .map(|feet_item_data| feet_item_data.move_speed)
                         {
-                            ui.label(format!(
-                                "[{} {}]",
-                                game_data.client_strings.item_move_speed, move_speed
-                            ));
+                            ui.colored_label(
+                                POSITIVE_EFFECT_COLOR,
+                                format!(
+                                    "[{} {}]",
+                                    game_data.client_strings.item_move_speed, move_speed
+                                ),
+                            );
                         }
                     } else if matches!(equipment_item.item.item_type, ItemType::Back) {
                         if let Some(move_speed) = game_data
@@ -482,10 +577,13 @@ pub fn ui_add_item_tooltip(
                             .get_back_item(equipment_item.item.item_number)
                             .map(|back_item_data| back_item_data.move_speed)
                         {
-                            ui.label(format!(
-                                "[{} {}]",
-                                game_data.client_strings.item_move_speed, move_speed
-                            ));
+                            ui.colored_label(
+                                POSITIVE_EFFECT_COLOR,
+                                format!(
+                                    "[{} {}]",
+                                    game_data.client_strings.item_move_speed, move_speed
+                                ),
+                            );
                         }
                     }
 
@@ -495,13 +593,18 @@ pub fn ui_add_item_tooltip(
                     add_item_description(ui, game_data, item_data);
                 }
                 ItemType::Jewellery => {
-                    ui.label(format!(
-                        "{}:{} {}:{}",
-                        game_data.client_strings.item_class,
-                        game_data.string_database.get_item_class(item_data.class),
-                        game_data.client_strings.item_quality,
-                        item_data.quality
-                    ));
+                    ui.horizontal(|ui| {
+                        add_label_key_value(
+                            ui,
+                            game_data.client_strings.item_class,
+                            game_data.string_database.get_item_class(item_data.class),
+                        );
+                        add_label_key_value(
+                            ui,
+                            game_data.client_strings.item_quality,
+                            &item_data.quality.to_string(),
+                        );
+                    });
 
                     add_item_add_ability(ui, game_data, item_data);
                     add_equipment_item_add_appraisal(ui, game_data, equipment_item);
@@ -509,13 +612,18 @@ pub fn ui_add_item_tooltip(
                     add_item_description(ui, game_data, item_data);
                 }
                 ItemType::Vehicle => {
-                    ui.label(format!(
-                        "{}:{} {}:{}",
-                        game_data.client_strings.item_class,
-                        game_data.string_database.get_item_class(item_data.class),
-                        game_data.client_strings.item_quality,
-                        item_data.quality
-                    ));
+                    ui.horizontal(|ui| {
+                        add_label_key_value(
+                            ui,
+                            game_data.client_strings.item_class,
+                            game_data.string_database.get_item_class(item_data.class),
+                        );
+                        add_label_key_value(
+                            ui,
+                            game_data.client_strings.item_quality,
+                            &item_data.quality.to_string(),
+                        );
+                    });
 
                     // TODO: Vehicle tooltip
                     add_item_description(ui, game_data, item_data);
@@ -532,13 +640,18 @@ pub fn ui_add_item_tooltip(
                         .items
                         .get_consumable_item(stackable_item.item.item_number);
 
-                    ui.label(format!(
-                        "{}:{} {}:{}",
-                        game_data.client_strings.item_class,
-                        game_data.string_database.get_item_class(item_data.class),
-                        game_data.client_strings.item_quality,
-                        item_data.quality
-                    ));
+                    ui.horizontal(|ui| {
+                        add_label_key_value(
+                            ui,
+                            game_data.client_strings.item_class,
+                            game_data.string_database.get_item_class(item_data.class),
+                        );
+                        add_label_key_value(
+                            ui,
+                            game_data.client_strings.item_quality,
+                            &item_data.quality.to_string(),
+                        );
+                    });
 
                     match item_data.class {
                         ItemClass::EngineFuel => {
@@ -558,7 +671,17 @@ pub fn ui_add_item_tooltip(
                                 if let Some((ability_type, value)) =
                                     use_item_data.add_ability.as_ref()
                                 {
-                                    ui.label(format!("[{:?} {}]", ability_type, value));
+                                    ui.colored_label(
+                                        get_effect_color(*value),
+                                        format!(
+                                            "[{} {}{}]",
+                                            game_data
+                                                .string_database
+                                                .get_ability_type(*ability_type),
+                                            value,
+                                            ability_type_suffix(*ability_type)
+                                        ),
+                                    );
                                 }
                             }
                         }
@@ -571,27 +694,28 @@ pub fn ui_add_item_tooltip(
                         .items
                         .get_gem_item(stackable_item.item.item_number);
 
-                    ui.label(format!(
-                        "{}:{} {}:{}",
-                        game_data.client_strings.item_class,
-                        game_data.string_database.get_item_class(item_data.class),
-                        game_data.client_strings.item_quality,
-                        item_data.quality
-                    ));
+                    ui.horizontal(|ui| {
+                        add_label_key_value(
+                            ui,
+                            game_data.client_strings.item_class,
+                            game_data.string_database.get_item_class(item_data.class),
+                        );
+                        add_label_key_value(
+                            ui,
+                            game_data.client_strings.item_quality,
+                            &item_data.quality.to_string(),
+                        );
+                    });
 
                     if let Some(gem_item_data) = gem_item_data {
                         for &(ability_type, value) in gem_item_data.gem_add_ability.iter() {
                             ui.colored_label(
-                                egui::Color32::from_rgb(100, 200, 255),
+                                get_effect_color(value),
                                 format!(
                                     "[{} {}{}]",
                                     game_data.string_database.get_ability_type(ability_type),
                                     value,
-                                    if matches!(ability_type, AbilityType::SaveMana) {
-                                        "%"
-                                    } else {
-                                        ""
-                                    }
+                                    ability_type_suffix(ability_type)
                                 ),
                             );
                         }
@@ -600,13 +724,18 @@ pub fn ui_add_item_tooltip(
                     add_item_description(ui, game_data, item_data);
                 }
                 ItemType::Material => {
-                    ui.label(format!(
-                        "{}:{} {}:{}",
-                        game_data.client_strings.item_class,
-                        game_data.string_database.get_item_class(item_data.class),
-                        game_data.client_strings.item_quality,
-                        item_data.quality
-                    ));
+                    ui.horizontal(|ui| {
+                        add_label_key_value(
+                            ui,
+                            game_data.client_strings.item_class,
+                            game_data.string_database.get_item_class(item_data.class),
+                        );
+                        add_label_key_value(
+                            ui,
+                            game_data.client_strings.item_quality,
+                            &item_data.quality.to_string(),
+                        );
+                    });
 
                     add_item_description(ui, game_data, item_data);
                 }
@@ -684,21 +813,15 @@ fn add_skill_next_level<'a>(
 
 fn add_skill_aoe_range(ui: &mut egui::Ui, game_data: &GameData, skill_data: &SkillData) {
     if skill_data.scope > 0 {
-        ui.label(format!(
-            "{}: {}m",
-            game_data.client_strings.skill_aoe_range,
-            skill_data.scope / 100
-        ));
+        let scope = format!("{}m", skill_data.scope / 100);
+        add_label_key_value(ui, game_data.client_strings.skill_aoe_range, &scope);
     }
 }
 
 fn add_skill_cast_range(ui: &mut egui::Ui, game_data: &GameData, skill_data: &SkillData) {
     if skill_data.cast_range > 0 {
-        ui.label(format!(
-            "{}: {}m",
-            game_data.client_strings.skill_cast_range,
-            skill_data.cast_range / 100
-        ));
+        let range = format!("{}m", skill_data.cast_range / 100);
+        add_label_key_value(ui, game_data.client_strings.skill_cast_range, &range);
     }
 }
 
@@ -719,17 +842,16 @@ fn add_skill_power(ui: &mut egui::Ui, game_data: &GameData, skill_data: &SkillDa
         _ => "",
     };
 
-    ui.label(format!(
-        "{}: {} ({})",
-        game_data.client_strings.skill_power, damage_type, skill_data.power
-    ));
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        add_label_key_value(ui, game_data.client_strings.skill_power, damage_type);
+        ui.colored_label(egui::Color32::GREEN, format!(" ({})", skill_data.power));
+    });
 }
 
 fn add_skill_recover_xp(ui: &mut egui::Ui, game_data: &GameData, skill_data: &SkillData) {
-    ui.label(format!(
-        "{}: {}%",
-        game_data.client_strings.skill_recover_xp, skill_data.power
-    ));
+    let power = format!("{}%", skill_data.power);
+    add_label_key_value(ui, game_data.client_strings.skill_recover_xp, &power);
 }
 
 fn add_skill_require_ability(
@@ -948,7 +1070,9 @@ fn add_skill_status_effects(
     };
 
     let add_skill_add_ability = |text: &mut String, skill_add_ability: &SkillAddAbility| {
-        if skill_add_ability.value > 0 {
+        let mut has_text = false;
+
+        if skill_add_ability.value != 0 {
             let value = if matches!(
                 skill_data.skill_type,
                 SkillType::SelfBoundDuration
@@ -965,15 +1089,18 @@ fn add_skill_status_effects(
                 skill_add_ability.value
             };
 
-            if matches!(skill_add_ability.ability_type, AbilityType::PassiveSaveMana) {
-                write!(text, "{}%", value).ok();
-            } else {
-                write!(text, "{}", value).ok();
-            }
+            write!(
+                text,
+                "{}{}",
+                value,
+                ability_type_suffix(skill_add_ability.ability_type)
+            )
+            .ok();
+            has_text = true;
         }
 
-        if skill_add_ability.rate > 0 {
-            if skill_add_ability.value > 0 {
+        if skill_add_ability.rate != 0 {
+            if has_text {
                 text.push(' ');
             }
             write!(text, "{}%", skill_add_ability.rate).ok();
@@ -993,14 +1120,16 @@ fn add_skill_status_effects(
                     StatusEffectType::AdditionalDamageRate
                 ) {
                     write!(&mut text, " [{}%]", skill_data.power).ok();
+                    ui.colored_label(POSITIVE_EFFECT_COLOR, text);
                 } else if let Some(skill_add_ability) = skill_data.add_ability[index].as_ref() {
                     text.push(' ');
                     text.push('[');
                     add_skill_add_ability(&mut text, skill_add_ability);
                     text.push(']');
+                    ui.colored_label(get_skill_add_ability_color(skill_add_ability), text);
+                } else {
+                    ui.colored_label(POSITIVE_EFFECT_COLOR, text);
                 }
-
-                ui.colored_label(egui::Color32::from_rgb(100, 200, 255), text);
             }
         } else if let Some(skill_add_ability) = skill_data.add_ability[index].as_ref() {
             let mut text = format!(
@@ -1014,43 +1143,54 @@ fn add_skill_status_effects(
             add_skill_add_ability(&mut text, skill_add_ability);
 
             text.push(']');
-            ui.colored_label(egui::Color32::from_rgb(100, 200, 255), text);
+            ui.colored_label(get_skill_add_ability_color(skill_add_ability), text);
         }
     }
 
     if skill_data.status_effects.iter().any(|x| x.is_some()) {
         if skill_data.success_ratio > 0 {
-            ui.label(format!(
-                "{}: {}-{}% {}: {}{}",
-                game_data.client_strings.skill_success_rate,
-                (skill_data.success_ratio as f32 * 0.8) as i32,
-                skill_data.success_ratio,
-                game_data.client_strings.skill_duration,
-                skill_data.status_effect_duration.as_secs(),
-                game_data.client_strings.duration_seconds,
-            ));
+            ui.horizontal(|ui| {
+                let success_rate = format!(
+                    "{}-{}%",
+                    (skill_data.success_ratio as f32 * 0.8) as i32,
+                    skill_data.success_ratio,
+                );
+                add_label_key_value(
+                    ui,
+                    game_data.client_strings.skill_success_rate,
+                    &success_rate,
+                );
+                let duration = format!(
+                    "{} {}",
+                    skill_data.status_effect_duration.as_secs(),
+                    game_data.client_strings.duration_seconds,
+                );
+                add_label_key_value(ui, game_data.client_strings.skill_duration, &duration);
+            });
         } else {
-            ui.label(format!(
-                "{}: 100% {}: {} {}",
-                game_data.client_strings.skill_success_rate,
-                game_data.client_strings.skill_duration,
-                skill_data.status_effect_duration.as_secs(),
-                game_data.client_strings.duration_seconds,
-            ));
+            ui.horizontal(|ui| {
+                add_label_key_value(ui, game_data.client_strings.skill_success_rate, "100%");
+                let duration = format!(
+                    "{} {}",
+                    skill_data.status_effect_duration.as_secs(),
+                    game_data.client_strings.duration_seconds,
+                );
+                add_label_key_value(ui, game_data.client_strings.skill_duration, &duration);
+            });
         }
     }
 }
 
 fn add_skill_steal_ability_value(ui: &mut egui::Ui, game_data: &GameData, skill_data: &SkillData) {
     for skill_add_ability in skill_data.add_ability.iter().filter_map(|x| x.as_ref()) {
-        ui.label(format!(
-            "{}: {} {}",
-            game_data.client_strings.skill_steal_ability,
+        let ability = format!(
+            "{} {}",
             game_data
                 .string_database
                 .get_ability_type(skill_add_ability.ability_type),
             skill_add_ability.value,
-        ));
+        );
+        add_label_key_value(ui, game_data.client_strings.skill_steal_ability, &ability);
     }
 }
 
@@ -1091,23 +1231,23 @@ fn add_skill_summon_points(
 }
 
 fn add_skill_type(ui: &mut egui::Ui, game_data: &GameData, skill_data: &SkillData) {
-    ui.label(format!(
-        "{}: {}",
+    add_label_key_value(
+        ui,
         game_data.client_strings.skill_type,
         game_data
             .string_database
-            .get_skill_type(skill_data.skill_type)
-    ));
+            .get_skill_type(skill_data.skill_type),
+    );
 }
 
 fn add_skill_target(ui: &mut egui::Ui, game_data: &GameData, skill_data: &SkillData) {
-    ui.label(format!(
-        "{}: {}",
+    add_label_key_value(
+        ui,
         game_data.client_strings.skill_target,
         game_data
             .string_database
-            .get_skill_target_filter(skill_data.target_filter)
-    ));
+            .get_skill_target_filter(skill_data.target_filter),
+    );
 }
 
 fn add_skill_type_and_target(ui: &mut egui::Ui, game_data: &GameData, skill_data: &SkillData) {

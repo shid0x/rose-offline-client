@@ -41,6 +41,10 @@ const IID_BTN_UP_SENSE: i32 = 39;
 const IID_TAB_UNION: i32 = 41;
 // const IID_TAB_UNION_BG: i32 = 42;
 // const IID_TAB_UNION_BTN: i32 = 43;
+const STAT_TOOLTIP_ROW_X: f32 = 12.0;
+const STAT_TOOLTIP_ROW_WIDTH: f32 = 80.0;
+const STAT_TOOLTIP_ROW_HEIGHT: f32 = 20.0;
+const STAT_TOOLTIP_SECTION_COLOR: egui::Color32 = egui::Color32::from_rgb(155, 208, 255);
 const UNION_STB_COLOR_COLUMN: usize = 1;
 const UNION_STB_STRING_ID_COLUMN: usize = 11;
 const UNION_COLORS: [egui::Color32; 10] = [
@@ -66,6 +70,184 @@ impl Default for UiStateCharacterInfo {
             current_tab: IID_TAB_BASICINFO,
         }
     }
+}
+
+fn basic_stat_tooltip_lines(basic_stat_type: BasicStatType) -> &'static [&'static str] {
+    match basic_stat_type {
+        BasicStatType::Strength => &[
+            "Increases maximum HP",
+            "Increases defense",
+            "Increases carry weight",
+        ],
+        BasicStatType::Dexterity => &["Increases move speed", "Increases avoid"],
+        BasicStatType::Intelligence => &["Increases maximum MP", "Increases magic resistance"],
+        BasicStatType::Concentration => &["Increases hit", "Increases critical rate"],
+        BasicStatType::Charm => &[
+            "Affects quest rewards and some loot-related formulas",
+            "Used by quest reward calculations and some loot/drop logic",
+            "Does not currently increase the combat stats shown on this panel",
+        ],
+        BasicStatType::Sense => &[
+            "Increases critical rate",
+            "Improves many skill damage formulas",
+        ],
+    }
+}
+
+fn basic_stat_weapon_tooltip(
+    basic_stat_type: BasicStatType,
+) -> Option<(&'static str, &'static [&'static str])> {
+    match basic_stat_type {
+        BasicStatType::Strength => Some((
+            "Increases Attack power for :",
+            &[
+                "One-handed weapons",
+                "Two-handed weapons",
+                "Dual swords",
+                "Launchers",
+                "Unarmed attacks",
+                "Katars",
+                "Magic staves",
+                "Bows and crossbows",
+            ],
+        )),
+        BasicStatType::Dexterity => Some((
+            "Increases Attack power for :",
+            &[
+                "Bows and crossbows",
+                "Katars",
+                "Dual swords",
+                "Guns",
+                "Unarmed attacks",
+            ],
+        )),
+        BasicStatType::Intelligence => Some((
+            "Increases Attack power for :",
+            &["Magic wands", "Magic staves"],
+        )),
+        BasicStatType::Concentration => {
+            Some(("Increases Attack power for :", &["Guns", "Launchers"]))
+        }
+        BasicStatType::Charm => None,
+        BasicStatType::Sense => Some((
+            "Improves attack scaling for:",
+            &["Magic wands", "Guns", "Launchers", "Bows", "Crossbows"],
+        )),
+    }
+}
+
+fn weapon_gradient_color(index: usize, count: usize) -> egui::Color32 {
+    if count <= 1 {
+        return egui::Color32::from_rgb(124, 210, 140);
+    }
+
+    let strongest = (124u16, 210u16, 140u16);
+    let lightest = (188u16, 224u16, 190u16);
+    let denominator = (count - 1) as u16;
+    let step = index as u16;
+    let interpolate =
+        |start: u16, end: u16| -> u8 { (start + ((end - start) * step) / denominator) as u8 };
+
+    egui::Color32::from_rgb(
+        interpolate(strongest.0, lightest.0),
+        interpolate(strongest.1, lightest.1),
+        interpolate(strongest.2, lightest.2),
+    )
+}
+
+#[cfg(test)]
+fn basic_stat_tooltip_lines_with_cost(
+    basic_stat_type: BasicStatType,
+    cost: Option<u32>,
+) -> Vec<String> {
+    let mut lines = basic_stat_tooltip_lines(basic_stat_type)
+        .iter()
+        .map(|line| (*line).to_string())
+        .collect::<Vec<_>>();
+
+    if let Some((heading, weapons)) = basic_stat_weapon_tooltip(basic_stat_type) {
+        lines.push(heading.to_string());
+        lines.extend(weapons.iter().map(|weapon| format!("- {}", weapon)));
+    }
+
+    if let Some(cost) = cost {
+        lines.push(format!("Required Points: {}", cost));
+    }
+
+    lines
+}
+
+fn show_basic_stat_tooltip(ui: &mut egui::Ui, basic_stat_type: BasicStatType, cost: Option<u32>) {
+    let effect_lines = basic_stat_tooltip_lines(basic_stat_type);
+    for (index, line) in effect_lines.iter().enumerate() {
+        ui.label(*line);
+        if index + 1 < effect_lines.len() {
+            ui.add_space(2.0);
+        }
+    }
+
+    if let Some((heading, weapons)) = basic_stat_weapon_tooltip(basic_stat_type) {
+        if !effect_lines.is_empty() {
+            ui.add_space(4.0);
+        }
+
+        ui.label(egui::RichText::new(heading).color(STAT_TOOLTIP_SECTION_COLOR));
+        ui.add_space(2.0);
+
+        for (index, weapon) in weapons.iter().enumerate() {
+            ui.label(
+                egui::RichText::new(format!("- {}", weapon))
+                    .color(weapon_gradient_color(index, weapons.len())),
+            );
+        }
+    }
+
+    if let Some(cost) = cost {
+        ui.add_space(4.0);
+        ui.label(format!("Required Points: {}", cost));
+    }
+}
+
+fn basic_stat_button_id(basic_stat_type: BasicStatType) -> i32 {
+    match basic_stat_type {
+        BasicStatType::Strength => IID_BTN_UP_STR,
+        BasicStatType::Dexterity => IID_BTN_UP_DEX,
+        BasicStatType::Intelligence => IID_BTN_UP_INT,
+        BasicStatType::Concentration => IID_BTN_UP_CON,
+        BasicStatType::Charm => IID_BTN_UP_CHARM,
+        BasicStatType::Sense => IID_BTN_UP_SENSE,
+    }
+}
+
+fn basic_stat_hover_rect(basic_stat_type: BasicStatType) -> egui::Rect {
+    let y = match basic_stat_type {
+        BasicStatType::Strength => 63.0,
+        BasicStatType::Dexterity => 84.0,
+        BasicStatType::Intelligence => 105.0,
+        BasicStatType::Concentration => 126.0,
+        BasicStatType::Charm => 147.0,
+        BasicStatType::Sense => 168.0,
+    };
+
+    egui::Rect::from_min_size(
+        egui::pos2(STAT_TOOLTIP_ROW_X, y),
+        egui::vec2(STAT_TOOLTIP_ROW_WIDTH, STAT_TOOLTIP_ROW_HEIGHT),
+    )
+}
+
+fn add_basic_stat_row_tooltip(ui: &mut egui::Ui, basic_stat_type: BasicStatType) {
+    let response = ui.interact(
+        basic_stat_hover_rect(basic_stat_type).translate(ui.min_rect().min.to_vec2()),
+        ui.make_persistent_id((
+            "character_info_stat_row",
+            basic_stat_button_id(basic_stat_type),
+        )),
+        egui::Sense::hover(),
+    );
+
+    response.on_hover_ui(|ui| {
+        show_basic_stat_tooltip(ui, basic_stat_type, None);
+    });
 }
 
 fn clan_position_name(game_data: &GameData, position: ClanMemberPosition) -> String {
@@ -262,6 +444,17 @@ pub fn ui_character_info_system(
                             egui::pos2(171.0, 214.0),
                             &format!("{}", player.move_speed.speed),
                         );
+
+                        for basic_stat_type in [
+                            BasicStatType::Strength,
+                            BasicStatType::Dexterity,
+                            BasicStatType::Intelligence,
+                            BasicStatType::Concentration,
+                            BasicStatType::Charm,
+                            BasicStatType::Sense,
+                        ] {
+                            add_basic_stat_row_tooltip(ui, basic_stat_type);
+                        }
                     }
                     Some(&mut IID_TAB_UNION) => {
                         let (union_name, union_name_color) = player
@@ -320,15 +513,15 @@ pub fn ui_character_info_system(
     let stat_button_response = |basic_stat_type: BasicStatType,
                                 response: Option<egui::Response>| {
         if let Some(response) = response {
-            if let Some(cost) = game_data
+            let cost = game_data
                 .ability_value_calculator
-                .calculate_basic_stat_increase_cost(player.basic_stats, basic_stat_type)
-            {
-                if response
-                    .on_hover_text(format!("Required Points: {}", cost))
-                    .clicked()
-                    && cost <= player.stat_points.points
-                {
+                .calculate_basic_stat_increase_cost(player.basic_stats, basic_stat_type);
+            let response = response.on_hover_ui(|ui| {
+                show_basic_stat_tooltip(ui, basic_stat_type, cost);
+            });
+
+            if let Some(cost) = cost {
+                if response.clicked() && cost <= player.stat_points.points {
                     if let Some(game_connection) = game_connection.as_ref() {
                         game_connection
                             .client_message_tx
@@ -346,4 +539,67 @@ pub fn ui_character_info_system(
     stat_button_response(BasicStatType::Concentration, response_raise_con_button);
     stat_button_response(BasicStatType::Charm, response_raise_cha_button);
     stat_button_response(BasicStatType::Sense, response_raise_sen_button);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{basic_stat_tooltip_lines, basic_stat_tooltip_lines_with_cost};
+    use rose_game_common::components::BasicStatType;
+
+    #[test]
+    fn each_basic_stat_tooltip_has_content() {
+        for basic_stat_type in [
+            BasicStatType::Strength,
+            BasicStatType::Dexterity,
+            BasicStatType::Intelligence,
+            BasicStatType::Concentration,
+            BasicStatType::Charm,
+            BasicStatType::Sense,
+        ] {
+            assert!(!basic_stat_tooltip_lines(basic_stat_type).is_empty());
+        }
+    }
+
+    #[test]
+    fn charm_tooltip_mentions_current_non_combat_behavior() {
+        let tooltip_lines = basic_stat_tooltip_lines_with_cost(BasicStatType::Charm, None);
+
+        assert!(tooltip_lines
+            .iter()
+            .any(|line| line.contains("quest rewards")));
+        assert!(tooltip_lines.iter().any(|line| line
+            .contains("Does not currently increase the combat stats shown on this panel")));
+    }
+
+    #[test]
+    fn tooltips_avoid_developer_facing_terms() {
+        for basic_stat_type in [
+            BasicStatType::Strength,
+            BasicStatType::Dexterity,
+            BasicStatType::Intelligence,
+            BasicStatType::Concentration,
+            BasicStatType::Charm,
+            BasicStatType::Sense,
+        ] {
+            for line in basic_stat_tooltip_lines_with_cost(basic_stat_type, None) {
+                assert!(!line.contains("Rust"));
+                assert!(!line.contains("build"));
+            }
+        }
+    }
+
+    #[test]
+    fn tooltip_cost_line_is_only_appended_when_present() {
+        let without_cost = basic_stat_tooltip_lines_with_cost(BasicStatType::Strength, None);
+        assert!(!without_cost
+            .iter()
+            .any(|line| line.starts_with("Required Points:")));
+
+        let with_cost = basic_stat_tooltip_lines_with_cost(BasicStatType::Strength, Some(12));
+        assert_eq!(
+            with_cost.last().map(String::as_str),
+            Some("Required Points: 12")
+        );
+        assert_eq!(with_cost.len(), without_cost.len() + 1);
+    }
 }
