@@ -5,15 +5,15 @@ use bevy::{
     ecs::query::WorldQuery,
     prelude::{
         Assets, BuildChildren, Changed, Color, Commands, ComputedVisibility, DespawnRecursiveExt,
-        Entity, EventReader, GlobalTransform, Handle, Image, Local, Or, Query, RemovedComponents,
-        Res, ResMut, Transform, Vec2, Vec3, Visibility, With, Without,
+        Entity, EventReader, GlobalTransform, Handle, Image, Local, Or, ParamSet, Query,
+        RemovedComponents, Res, ResMut, Transform, Vec2, Vec3, Visibility, With, Without,
     },
     render::{
         render_resource::{Extent3d, TextureDimension, TextureFormat},
         texture::ImageSampler,
         view::NoFrustumCulling,
     },
-    utils::HashMap,
+    utils::{HashMap, HashSet},
     window::PrimaryWindow,
 };
 use bevy_egui::{egui, EguiContexts};
@@ -115,7 +115,9 @@ pub fn get_monster_name_tag_color(
 mod tests {
     use bevy_egui::egui;
 
-    use super::get_clan_name_tag_color;
+    use rose_game_common::components::{Level, Team};
+
+    use super::{get_clan_name_tag_color, get_monster_name_tag_cache_key};
 
     #[test]
     fn clan_name_color_matches_original_palette() {
@@ -157,6 +159,59 @@ mod tests {
     fn clan_level_must_be_part_of_nametag_cache_key() {
         assert_ne!(format!("Knight\nRose#{}", 1), format!("Knight\nRose#{}", 2));
     }
+
+    #[test]
+    fn monster_cache_key_must_include_level_team_and_player_level() {
+        let player_level_20 = Level::new(20);
+        let player_level_21 = Level::new(21);
+        let monster_level_30 = Level::new(30);
+        let monster_level_31 = Level::new(31);
+        let monster_team_100 = Team::new(100);
+        let monster_team_101 = Team::new(101);
+
+        assert_ne!(
+            get_monster_name_tag_cache_key(
+                "Jelly Bean",
+                Some(&player_level_20),
+                Some(&monster_level_30),
+                Some(&monster_team_100),
+            ),
+            get_monster_name_tag_cache_key(
+                "Jelly Bean",
+                Some(&player_level_21),
+                Some(&monster_level_30),
+                Some(&monster_team_100),
+            )
+        );
+        assert_ne!(
+            get_monster_name_tag_cache_key(
+                "Jelly Bean",
+                Some(&player_level_20),
+                Some(&monster_level_30),
+                Some(&monster_team_100),
+            ),
+            get_monster_name_tag_cache_key(
+                "Jelly Bean",
+                Some(&player_level_20),
+                Some(&monster_level_31),
+                Some(&monster_team_100),
+            )
+        );
+        assert_ne!(
+            get_monster_name_tag_cache_key(
+                "Jelly Bean",
+                Some(&player_level_20),
+                Some(&monster_level_30),
+                Some(&monster_team_100),
+            ),
+            get_monster_name_tag_cache_key(
+                "Jelly Bean",
+                Some(&player_level_20),
+                Some(&monster_level_30),
+                Some(&monster_team_101),
+            )
+        );
+    }
 }
 
 pub fn get_clan_name_tag_color(clan_level: u32) -> egui::Color32 {
@@ -172,8 +227,34 @@ pub fn get_clan_name_tag_color(clan_level: u32) -> egui::Color32 {
     }
 }
 
-fn get_name_tag_cache_key(object: &NameTagObjectQueryItem) -> String {
-    if let Some(store) = object.personal_store {
+fn get_monster_name_tag_cache_key(
+    monster_name: &str,
+    player_level: Option<&Level>,
+    monster_level: Option<&Level>,
+    monster_team: Option<&Team>,
+) -> String {
+    format!(
+        "monster:{}#p{}#m{}#t{}",
+        monster_name,
+        player_level.map_or(1, |level| level.level),
+        monster_level.map_or(1, |level| level.level),
+        monster_team.map_or(0, |team| team.id),
+    )
+}
+
+fn get_name_tag_cache_key(
+    object: &NameTagObjectQueryItem,
+    player: Option<&PlayerQueryItem>,
+    name_tag_type: NameTagType,
+) -> String {
+    if name_tag_type == NameTagType::Monster {
+        get_monster_name_tag_cache_key(
+            &object.name.name,
+            player.map(|player| player.level),
+            object.level,
+            object.team,
+        )
+    } else if let Some(store) = object.personal_store {
         store.title.clone()
     } else if let Some(clan_membership) = &object.clan_membership {
         format!(
@@ -522,15 +603,18 @@ pub fn name_tag_system(
     mut commands: Commands,
     mut name_tag_cache: Local<NameTagCache>,
     query_add: Query<NameTagObjectQuery, Without<NameTagEntity>>,
-    query_changed: Query<
-        (Entity, Option<&NameTagEntity>),
-        Or<(
-            Changed<ClientEntityName>,
-            Changed<PersonalStore>,
-            Changed<ClanMembership>,
-            Changed<StatusEffects>,
-        )>,
-    >,
+    mut query_changed: ParamSet<(
+        Query<
+            (Entity, Option<&NameTagEntity>),
+            Or<(
+                Changed<ClientEntityName>,
+                Changed<PersonalStore>,
+                Changed<ClanMembership>,
+                Changed<StatusEffects>,
+            )>,
+        >,
+        Query<(Entity, Option<&NameTagEntity>), (With<Npc>, Or<(Changed<Level>, Changed<Team>)>)>,
+    )>,
     mut removed_personal_store: RemovedComponents<PersonalStore>,
     mut removed_clan_membership: RemovedComponents<ClanMembership>,
     query_player: Query<PlayerQuery, With<PlayerCharacter>>,
@@ -549,6 +633,7 @@ pub fn name_tag_system(
     let Ok(window_entity) = query_window.get_single() else {
         return;
     };
+    let mut invalidated_entities = HashSet::default();
 
     if load_zone_events.iter().last().is_some()
         || pixels_per_point != name_tag_cache.pixels_per_point
@@ -566,34 +651,44 @@ pub fn name_tag_system(
         return;
     }
 
-    for (entity, name_tag_entity) in query_changed.iter() {
-        // Despawn previous name tag
+    let mut invalidate_nametag = |entity: Entity, name_tag_entity: Option<&NameTagEntity>| {
+        if !invalidated_entities.insert(entity) {
+            return;
+        }
+
         if let Some(name_tag_entity) = name_tag_entity {
             commands.entity(entity).remove::<NameTagEntity>();
             commands.entity(name_tag_entity.0).despawn_recursive();
         }
 
-        // Clear any pending name tag for this entity
         name_tag_cache.pending.remove(&entity);
+    };
+
+    for (entity, name_tag_entity) in query_changed.p0().iter() {
+        invalidate_nametag(entity, name_tag_entity);
+    }
+
+    for (entity, name_tag_entity) in query_changed.p1().iter() {
+        invalidate_nametag(entity, name_tag_entity);
     }
 
     // RemovedComponents<T> does not trigger Changed<T>, so explicitly invalidate any
     // existing nametag when PersonalStore is removed (shop close).
     for entity in removed_personal_store.iter() {
-        if let Ok((_, name_tag_entity)) = query_nametags.get(entity) {
-            commands.entity(entity).remove::<NameTagEntity>();
-            commands.entity(name_tag_entity.0).despawn_recursive();
-        }
-        name_tag_cache.pending.remove(&entity);
+        let name_tag_entity = query_nametags
+            .get(entity)
+            .ok()
+            .map(|(_, name_tag_entity)| name_tag_entity);
+        invalidate_nametag(entity, name_tag_entity);
     }
 
     // Also invalidate nametag when ClanMembership is removed (player leaves / kicked from clan).
     for entity in removed_clan_membership.iter() {
-        if let Ok((_, name_tag_entity)) = query_nametags.get(entity) {
-            commands.entity(entity).remove::<NameTagEntity>();
-            commands.entity(name_tag_entity.0).despawn_recursive();
-        }
-        name_tag_cache.pending.remove(&entity);
+        let name_tag_entity = query_nametags
+            .get(entity)
+            .ok()
+            .map(|(_, name_tag_entity)| name_tag_entity);
+        invalidate_nametag(entity, name_tag_entity);
     }
 
     for object in query_add.iter() {
@@ -625,7 +720,7 @@ pub fn name_tag_system(
             NameTagType::Character
         };
 
-        let cache_key = get_name_tag_cache_key(&object);
+        let cache_key = get_name_tag_cache_key(&object, player.as_ref(), name_tag_type);
         let name_tag_data = if let Some(name_tag_data) = name_tag_cache.cache.get(&cache_key) {
             name_tag_data
         } else if let Some(pending_name_tag_data) = name_tag_cache.pending.remove(&object.entity) {

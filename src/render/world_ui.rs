@@ -510,6 +510,25 @@ pub fn queue_world_ui_meshes(
             let screen_pos =
                 (clip_pos.truncate() + Vec2::ONE) / 2.0 * Vec2::new(view_width, view_height);
 
+            // Round screen_offset and screen_size to integer pixels so that the
+            // text texture texels align 1:1 with screen pixels (crisp text).
+            // Then compute an anchor snap correction from the projected world
+            // position — this is the same for ALL rects sharing the same
+            // world_position (i.e. all rows of one name tag), so they all
+            // jump in unison, preventing inter-row oscillation.
+            let screen_offset = Vec2::new(
+                rect.screen_offset.x.round(),
+                rect.screen_offset.y.round(),
+            );
+            let screen_size = Vec2::new(
+                rect.screen_size.x.round(),
+                rect.screen_size.y.round(),
+            );
+            let snap_correction = Vec2::new(
+                screen_pos.x.round() - screen_pos.x,
+                screen_pos.y.round() - screen_pos.y,
+            );
+
             let min_screen_pos = screen_pos + rect.screen_offset;
             let max_screen_pos = screen_pos + rect.screen_offset + rect.screen_size;
             if max_screen_pos.x < 0.0
@@ -522,18 +541,18 @@ pub fn queue_world_ui_meshes(
             }
 
             let positions = [
-                [rect.screen_offset.x, rect.screen_offset.y],
+                [screen_offset.x + snap_correction.x, screen_offset.y + snap_correction.y],
                 [
-                    rect.screen_offset.x + rect.screen_size.x,
-                    rect.screen_offset.y,
+                    screen_offset.x + screen_size.x + snap_correction.x,
+                    screen_offset.y + snap_correction.y,
                 ],
                 [
-                    rect.screen_offset.x + rect.screen_size.x,
-                    rect.screen_offset.y + rect.screen_size.y,
+                    screen_offset.x + screen_size.x + snap_correction.x,
+                    screen_offset.y + screen_size.y + snap_correction.y,
                 ],
                 [
-                    rect.screen_offset.x,
-                    rect.screen_offset.y + rect.screen_size.y,
+                    screen_offset.x + snap_correction.x,
+                    screen_offset.y + screen_size.y + snap_correction.y,
                 ],
             ];
             let uvs = [

@@ -22,7 +22,7 @@ use crate::{
     },
     events::{ChatboxEvent, PlayerCommandEvent},
     resources::{GameConnection, GameData, SelectedTarget},
-    ui::{UiDisassembleSource, UiStateWindows, UiUpgradeSource},
+    ui::{UiDisassembleSource, UiSoundEvent, UiStateWindows, UiUpgradeSource},
 };
 
 #[derive(WorldQuery)]
@@ -62,6 +62,7 @@ pub fn player_command_system(
     query_team: Query<(&ClientEntity, &Team)>,
     query_skill_target: Query<SkillTargetQuery>,
     mut chatbox_events: EventWriter<ChatboxEvent>,
+    mut ui_sound_events: EventWriter<UiSoundEvent>,
     mut ui_state_windows: ResMut<UiStateWindows>,
     game_connection: Option<Res<GameConnection>>,
     game_data: Res<GameData>,
@@ -552,6 +553,10 @@ pub fn player_command_system(
             }
             PlayerCommandEvent::EquipAmmo(item_slot) => {
                 if let Some(item) = player.inventory.get_item(item_slot) {
+                    let equip_sound_id = game_data
+                        .items
+                        .get_base_item(item.get_item_reference())
+                        .and_then(|item_data| item_data.equip_sound_id);
                     let ammo_index = if let Some(item_data) =
                         game_data.items.get_base_item(item.get_item_reference())
                     {
@@ -567,19 +572,28 @@ pub fn player_command_system(
 
                     if let Some(ammo_index) = ammo_index {
                         if let Some(game_connection) = game_connection.as_ref() {
-                            game_connection
+                            if game_connection
                                 .client_message_tx
                                 .send(ClientMessage::ChangeAmmo {
                                     ammo_index,
                                     item_slot: Some(item_slot),
                                 })
-                                .ok();
+                                .is_ok()
+                            {
+                                if let Some(sound_id) = equip_sound_id {
+                                    ui_sound_events.send(UiSoundEvent::new(sound_id));
+                                }
+                            }
                         }
                     }
                 }
             }
             PlayerCommandEvent::EquipEquipment(item_slot) => {
                 if let Some(item) = player.inventory.get_item(item_slot) {
+                    let equip_sound_id = game_data
+                        .items
+                        .get_base_item(item.get_item_reference())
+                        .and_then(|item_data| item_data.equip_sound_id);
                     let equipment_index = match item.get_item_type() {
                         ItemType::Face => Some(EquipmentIndex::Face),
                         ItemType::Head => Some(EquipmentIndex::Head),
@@ -608,19 +622,28 @@ pub fn player_command_system(
 
                     if let Some(equipment_index) = equipment_index {
                         if let Some(game_connection) = game_connection.as_ref() {
-                            game_connection
+                            if game_connection
                                 .client_message_tx
                                 .send(ClientMessage::ChangeEquipment {
                                     equipment_index,
                                     item_slot: Some(item_slot),
                                 })
-                                .ok();
+                                .is_ok()
+                            {
+                                if let Some(sound_id) = equip_sound_id {
+                                    ui_sound_events.send(UiSoundEvent::new(sound_id));
+                                }
+                            }
                         }
                     }
                 }
             }
             PlayerCommandEvent::EquipVehicle(item_slot) => {
                 if let Some(item) = player.inventory.get_item(item_slot) {
+                    let equip_sound_id = game_data
+                        .items
+                        .get_base_item(item.get_item_reference())
+                        .and_then(|item_data| item_data.equip_sound_id);
                     let vehicle_part_index = if let Some(item_data) =
                         game_data.items.get_base_item(item.get_item_reference())
                     {
@@ -645,13 +668,18 @@ pub fn player_command_system(
 
                     if let Some(vehicle_part_index) = vehicle_part_index {
                         if let Some(game_connection) = game_connection.as_ref() {
-                            game_connection
+                            if game_connection
                                 .client_message_tx
                                 .send(ClientMessage::ChangeVehiclePart {
                                     vehicle_part_index,
                                     item_slot: Some(item_slot),
                                 })
-                                .ok();
+                                .is_ok()
+                            {
+                                if let Some(sound_id) = equip_sound_id {
+                                    ui_sound_events.send(UiSoundEvent::new(sound_id));
+                                }
+                            }
                         }
                     }
                 }

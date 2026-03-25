@@ -11,7 +11,7 @@ use bevy::{
 
 use rose_data::{
     AbilityType, EquipmentItem, Item, ItemReference, ItemSlotBehaviour, ItemType, SkillCooldown,
-    StatusEffectType,
+    SoundId, StatusEffectType,
 };
 use rose_file_readers::VfsPathBuf;
 use rose_game_common::{
@@ -53,9 +53,11 @@ use crate::{
         AppState, ClientEntityList, GameConnection, GameData, PendingClanInvites, SocialState,
         SoundCache, SoundSettings, WorldConnection, WorldRates, WorldTime,
     },
+    ui::UiSoundEvent,
 };
 
 const BONFIRE_BASE_SKILL_ID: u16 = 1161;
+const GET_ITEM_SOUND_ID: u16 = 531;
 
 fn party_level_up_event(player_entity: Entity, is_level_up: bool) -> Option<ClientEntityEvent> {
     is_level_up.then_some(ClientEntityEvent::PartyLevelUp(player_entity))
@@ -216,11 +218,21 @@ pub fn game_connection_system(
     app_state_current: Res<State<AppState>>,
     mut app_state_next: ResMut<NextState<AppState>>,
     mut client_entity_list: ResMut<ClientEntityList>,
-    mut chatbox_events: EventWriter<ChatboxEvent>,
-    mut game_connection_events: EventWriter<GameConnectionEvent>,
-    mut load_zone_events: EventWriter<LoadZoneEvent>,
-    mut use_item_events: EventWriter<UseItemEvent>,
-    mut client_entity_events: EventWriter<ClientEntityEvent>,
+    (
+        mut chatbox_events,
+        mut game_connection_events,
+        mut load_zone_events,
+        mut use_item_events,
+        mut client_entity_events,
+        mut ui_sound_events,
+    ): (
+        EventWriter<ChatboxEvent>,
+        EventWriter<GameConnectionEvent>,
+        EventWriter<LoadZoneEvent>,
+        EventWriter<UseItemEvent>,
+        EventWriter<ClientEntityEvent>,
+        EventWriter<UiSoundEvent>,
+    ),
     query_player_inventory: Query<&Inventory, With<PlayerCharacter>>,
     (
         mut party_events,
@@ -1368,6 +1380,8 @@ pub fn game_connection_system(
                             item_data.name
                         )));
                     }
+                    ui_sound_events
+                        .send(UiSoundEvent::new(SoundId::new(GET_ITEM_SOUND_ID).unwrap()));
 
                     commands.add(move |world: &mut World| {
                         let mut player = world.entity_mut(player_entity);
@@ -1386,6 +1400,8 @@ pub fn game_connection_system(
                         "You have earned {} Zuly.",
                         money.0
                     )));
+                    ui_sound_events
+                        .send(UiSoundEvent::new(SoundId::new(GET_ITEM_SOUND_ID).unwrap()));
 
                     commands.add(move |world: &mut World| {
                         let mut player = world.entity_mut(player_entity);

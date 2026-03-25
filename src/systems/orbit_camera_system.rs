@@ -5,8 +5,8 @@ use bevy::{
     },
     math::{Quat, Vec2, Vec3},
     prelude::{
-        Component, Entity, EventReader, GlobalTransform, Local, MouseButton, Query, Res, Time,
-        Transform, With,
+        Component, Entity, EventReader, Local, MouseButton, Query, Res, Time, Transform, With,
+        Without,
     },
     window::{CursorGrabMode, PrimaryWindow, Window},
 };
@@ -62,7 +62,7 @@ pub struct CameraControlState {
 pub fn orbit_camera_system(
     mut control_state: Local<CameraControlState>,
     mut query: Query<(&mut OrbitCamera, &mut Transform)>,
-    query_global_transform: Query<&GlobalTransform>,
+    query_follow_transform: Query<&Transform, Without<OrbitCamera>>,
     mut mouse_motion_events: EventReader<MouseMotion>,
     mut mouse_wheel_reader: EventReader<MouseWheel>,
     mut query_window: Query<&mut Window, With<PrimaryWindow>>,
@@ -94,9 +94,9 @@ pub fn orbit_camera_system(
 
     // If the camera has not had its initial position yet, move straight to entity
     if !orbit_camera.has_initial_position {
-        if let Ok(follow_transform) = query_global_transform.get(orbit_camera.follow_entity) {
+        if let Ok(follow_transform) = query_follow_transform.get(orbit_camera.follow_entity) {
             orbit_camera.rig = CameraRig::builder()
-                .with(Position::new(follow_transform.translation()))
+                .with(Position::new(follow_transform.translation))
                 .with(YawPitch::new().yaw_degrees(45.0).pitch_degrees(-30.0))
                 .with(Smooth::new_position_rotation(1.0, 1.0))
                 .with(Arm::new(Vec3::Z * orbit_camera.follow_distance))
@@ -151,8 +151,8 @@ pub fn orbit_camera_system(
     // Follow target
     let mut camera_collide_distance = orbit_camera.max_distance;
 
-    if let Ok(follow_transform) = query_global_transform.get(orbit_camera.follow_entity) {
-        let follow_position = follow_transform.translation() + orbit_camera.follow_offset;
+    if let Ok(follow_transform) = query_follow_transform.get(orbit_camera.follow_entity) {
+        let follow_position = follow_transform.translation + orbit_camera.follow_offset;
         orbit_camera.rig.driver_mut::<Position>().position = follow_position;
 
         // Camera collision
