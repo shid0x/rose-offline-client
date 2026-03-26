@@ -961,7 +961,9 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
                 ui_inventory_system,
                 ui_item_browser_system,
                 ui_player_shop_system,
-                ui_game_menu_system.after(ui_character_info_system),
+                ui_game_menu_system
+                    .after(ui_character_info_system)
+                    .after(ui_player_info_system),
                 ui_hotbar_system,
                 ui_minimap_system,
                 ui_npc_store_system,

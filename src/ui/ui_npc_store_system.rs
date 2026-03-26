@@ -101,13 +101,7 @@ fn ui_add_store_item_slot(
     let sprite = item_data.and_then(|item_data| {
         ui_resources.get_sprite_by_index(UiSpriteSheetType::Item, item_data.icon_index as usize)
     });
-    let quantity = item.as_ref().and_then(|item| {
-        if item.get_item_type().is_stackable_item() {
-            Some(item.get_quantity() as usize)
-        } else {
-            None
-        }
-    });
+    let quantity = None;
 
     let item_price = if let Some(item_reference) = item_reference {
         game_data
@@ -212,6 +206,7 @@ fn ui_add_buy_item_slot(
     game_data: &GameData,
     ui_resources: &UiResources,
     world_rates: Option<&Res<WorldRates>>,
+    number_input_dialog_events: &mut EventWriter<NumberInputDialogEvent>,
 ) -> i64 {
     let pending_buy_item = &mut buy_list[buy_slot_index];
     let item_reference = pending_buy_item.as_ref().and_then(|pending_buy_item| {
@@ -293,11 +288,43 @@ fn ui_add_buy_item_slot(
     }
 
     if let Some(DragAndDropId::NpcStore(store_tab_index, store_tab_slot)) = dropped_item {
-        *pending_buy_item = Some(PendingBuyItem {
-            store_tab_index,
-            store_tab_slot,
-            quantity: 1,
-        });
+        let dropped_item_reference = npc_data
+            .store_tabs
+            .get(store_tab_index)
+            .and_then(|x| x.as_ref())
+            .and_then(|store_tab| game_data.npcs.get_store_tab(*store_tab))
+            .and_then(|store_tab| store_tab.items.get(&(store_tab_slot as u16)));
+        let dropped_item_data = dropped_item_reference
+            .and_then(|item_reference| game_data.items.get_base_item(*item_reference));
+        let dropped_item_obj = dropped_item_data
+            .and_then(|item_data| Item::from_item_data(item_data, 999));
+        let is_stackable = dropped_item_obj
+            .map_or(false, |item| item.get_item_type().is_stackable_item());
+
+        if is_stackable {
+            number_input_dialog_events.send(NumberInputDialogEvent::Show {
+                max_value: Some(999),
+                modal: false,
+                ok: Some(Box::new(move |commands, quantity| {
+                    commands.add(move |world: &mut World| {
+                        let mut npc_store_events =
+                            world.resource_mut::<Events<NpcStoreEvent>>();
+                        npc_store_events.send(NpcStoreEvent::AddToBuyList {
+                            store_tab_index,
+                            store_tab_slot,
+                            quantity,
+                        })
+                    });
+                })),
+                cancel: None,
+            });
+        } else {
+            *pending_buy_item = Some(PendingBuyItem {
+                store_tab_index,
+                store_tab_slot,
+                quantity: 1,
+            });
+        }
     }
 
     item_price
@@ -631,6 +658,7 @@ pub fn ui_npc_store_system(
                             &game_data,
                             &ui_resources,
                             world_rates.as_ref(),
+                            &mut number_input_dialog_events,
                         );
                     }
                     ui.add_label_at(egui::pos2(39.0, 139.0), format!("{}", buy_item_price));

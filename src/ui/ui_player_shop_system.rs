@@ -33,8 +33,6 @@ struct ShopSetupSlot {
 #[derive(Default)]
 pub struct UiPlayerShopState {
     title: String,
-    debug_buy_slot_index: usize,
-    debug_buy_quantity: u32,
     selected_slots: Vec<ShopSetupSlot>,
     last_error: Option<String>,
     last_status: Option<String>,
@@ -109,9 +107,6 @@ pub fn ui_player_shop_system(
     };
 
     let inventory_entries = parse_inventory_entries(player_inventory, &game_data);
-    if ui_state.debug_buy_quantity == 0 {
-        ui_state.debug_buy_quantity = 1;
-    }
 
     let mut request_close_window = false;
     egui::Window::new("Player Shop Setup")
@@ -150,6 +145,7 @@ pub fn ui_player_shop_system(
                 columns[0].label("Select items to add to the shop.");
                 egui::ScrollArea::vertical()
                     .id_source("player_shop_inventory_scroll")
+                    .max_height(450.0)
                     .show(&mut columns[0], |ui| {
                         for entry in inventory_entries.iter() {
                             let already_selected = ui_state
@@ -198,6 +194,7 @@ pub fn ui_player_shop_system(
                 ));
                 egui::ScrollArea::vertical()
                     .id_source("player_shop_selected_scroll")
+                    .max_height(450.0)
                     .show(&mut columns[1], |ui| {
                         let mut remove_index = None;
                         for (index, selected) in ui_state.selected_slots.iter_mut().enumerate() {
@@ -330,38 +327,7 @@ pub fn ui_player_shop_system(
                     }
                 }
 
-                ui.separator();
-                ui.label("Debug Buy Slot:");
-                ui.add(
-                    egui::DragValue::new(&mut ui_state.debug_buy_slot_index)
-                        .speed(1.0)
-                        .clamp_range(0..=PLAYER_SHOP_MAX_SLOTS - 1),
-                );
-                ui.label("Qty:");
-                ui.add(
-                    egui::DragValue::new(&mut ui_state.debug_buy_quantity)
-                        .speed(1.0)
-                        .clamp_range(1..=999u32),
-                );
-                if ui.button("Debug Buy").clicked() {
-                    let command = format!(
-                        "/pshop_test_buy {} {}",
-                        ui_state.debug_buy_slot_index, ui_state.debug_buy_quantity
-                    );
-                    if send_shop_chat_command(&game_connection, command.clone()) {
-                        info!(
-                            "player-shop: debug buy requested slot={} qty={}",
-                            ui_state.debug_buy_slot_index, ui_state.debug_buy_quantity
-                        );
-                        ui_state.last_status = Some(format!(
-                            "Debug buy requested for slot {} x{}",
-                            ui_state.debug_buy_slot_index, ui_state.debug_buy_quantity
-                        ));
-                    } else {
-                        ui_state.last_error =
-                            Some(String::from("Failed to send debug buy request."));
-                    }
-                }
+
             });
 
             if ui.button("Close Window").clicked() {

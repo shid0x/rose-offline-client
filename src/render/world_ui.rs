@@ -516,14 +516,9 @@ pub fn queue_world_ui_meshes(
             // position — this is the same for ALL rects sharing the same
             // world_position (i.e. all rows of one name tag), so they all
             // jump in unison, preventing inter-row oscillation.
-            let screen_offset = Vec2::new(
-                rect.screen_offset.x.round(),
-                rect.screen_offset.y.round(),
-            );
-            let screen_size = Vec2::new(
-                rect.screen_size.x.round(),
-                rect.screen_size.y.round(),
-            );
+            let screen_offset =
+                Vec2::new(rect.screen_offset.x.round(), rect.screen_offset.y.round());
+            let screen_size = Vec2::new(rect.screen_size.x.round(), rect.screen_size.y.round());
             let snap_correction = Vec2::new(
                 screen_pos.x.round() - screen_pos.x,
                 screen_pos.y.round() - screen_pos.y,
@@ -541,7 +536,10 @@ pub fn queue_world_ui_meshes(
             }
 
             let positions = [
-                [screen_offset.x + snap_correction.x, screen_offset.y + snap_correction.y],
+                [
+                    screen_offset.x + snap_correction.x,
+                    screen_offset.y + snap_correction.y,
+                ],
                 [
                     screen_offset.x + screen_size.x + snap_correction.x,
                     screen_offset.y + snap_correction.y,

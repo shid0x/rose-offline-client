@@ -972,15 +972,7 @@ pub fn game_connection_system(
                     commands.add(move |world: &mut World| {
                         if let Some(mut equipment) = world.entity_mut(entity).get_mut::<Equipment>()
                         {
-                            if let Some(equipped_ammo) =
-                                equipment.equipped_ammo[ammo_index].as_mut()
-                            {
-                                if let Some(item) = item {
-                                    equipped_ammo.item = item.item;
-                                } else {
-                                    equipment.equipped_ammo[ammo_index] = None;
-                                }
-                            }
+                            *equipment.get_ammo_slot_mut(ammo_index) = item;
                         }
                     });
                 }
