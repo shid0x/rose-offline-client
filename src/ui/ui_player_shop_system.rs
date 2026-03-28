@@ -326,8 +326,6 @@ pub fn ui_player_shop_system(
                             Some(String::from("Failed to send shop close request."));
                     }
                 }
-
-
             });
 
             if ui.button("Close Window").clicked() {

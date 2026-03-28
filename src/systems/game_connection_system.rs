@@ -1061,12 +1061,34 @@ pub fn game_connection_system(
             Ok(ServerMessage::UpdateInventory { items, money }) => {
                 if let Some(player_entity) = client_entity_list.player_entity {
                     commands.add(move |world: &mut World| {
+                        // Play equip sound for any vehicle part that was equipped
+                        let equip_sound_id = {
+                            let game_data = world.resource::<GameData>();
+                            items.iter().find_map(|(slot, item)| {
+                                if let ItemSlot::Vehicle(_) = slot {
+                                    item.as_ref()
+                                        .and_then(|i| {
+                                            game_data
+                                                .items
+                                                .get_base_item(i.get_item_reference())
+                                        })
+                                        .and_then(|data| data.equip_sound_id)
+                                } else {
+                                    None
+                                }
+                            })
+                        };
+
                         update_inventory_and_money(
                             world,
                             player_entity,
                             items,
                             money,
                         );
+
+                        if let Some(sound_id) = equip_sound_id {
+                            world.send_event(UiSoundEvent::new(sound_id));
+                        }
                     });
                 }
             }
@@ -1907,10 +1929,16 @@ pub fn game_connection_system(
                 }
             }
             Ok(ServerMessage::NpcStoreTransactionError { error }) => {
-                chatbox_events.send(ChatboxEvent::System(format!(
-                    "Store transation failed with error {:?}",
-                    error
-                )));
+                let message = match error {
+                    rose_game_common::messages::server::NpcStoreTransactionError::NotSameUnion => {
+                        "You cannot use this union store.".to_string()
+                    }
+                    rose_game_common::messages::server::NpcStoreTransactionError::NotEnoughUnionPoints => {
+                        "You do not have enough Union Points.".to_string()
+                    }
+                    _ => format!("Store transation failed with error {:?}", error),
+                };
+                chatbox_events.send(ChatboxEvent::System(message));
             }
             Ok(ServerMessage::PartyCreate { entity_id }) => {
                 if let Some(inviter_entity) = client_entity_list.get(entity_id) {

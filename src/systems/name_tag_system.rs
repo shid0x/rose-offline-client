@@ -37,9 +37,10 @@ const ORDER_HEALTH_FOREGROUND: u8 = 1;
 const ORDER_STORE_BACKGROUND: u8 = 1;
 const ORDER_NAME: u8 = 2;
 const ORDER_TARGET_MARK: u8 = 2;
-const MAX_NAME_ROWS: usize = 2;
+const MAX_NAME_ROWS: usize = 3;
 const SHOP_TITLE_BOX_WIDTH: f32 = 256.0;
 const SHOP_TITLE_BOX_HEIGHT: f32 = 32.0;
+const UNION_SHOP_LABEL: &str = "[Union Shop]";
 
 pub struct NameTagData {
     pub image: Handle<Image>,
@@ -245,6 +246,7 @@ fn get_monster_name_tag_cache_key(
 fn get_name_tag_cache_key(
     object: &NameTagObjectQueryItem,
     player: Option<&PlayerQueryItem>,
+    game_data: &GameData,
     name_tag_type: NameTagType,
 ) -> String {
     if name_tag_type == NameTagType::Monster {
@@ -254,6 +256,8 @@ fn get_name_tag_cache_key(
             object.level,
             object.team,
         )
+    } else if get_npc_union_store_label(game_data, object).is_some() {
+        format!("{}\n{}", UNION_SHOP_LABEL, object.name.name)
     } else if let Some(store) = object.personal_store {
         store.title.clone()
     } else if let Some(clan_membership) = &object.clan_membership {
@@ -268,9 +272,21 @@ fn get_name_tag_cache_key(
     }
 }
 
+fn get_npc_union_store_label(
+    game_data: &GameData,
+    object: &NameTagObjectQueryItem,
+) -> Option<&'static str> {
+    object
+        .npc
+        .and_then(|npc| game_data.npcs.get_npc(npc.id))
+        .and_then(|npc_data| npc_data.store_union_number)
+        .map(|_| UNION_SHOP_LABEL)
+}
+
 fn create_pending_nametag(
     name_tag_settings: &NameTagSettings,
     egui_context: &mut EguiContexts,
+    game_data: &GameData,
     object: &NameTagObjectQueryItem,
     player: Option<&PlayerQueryItem>,
     name_tag_type: NameTagType,
@@ -352,14 +368,31 @@ fn create_pending_nametag(
             ),
         ),
         NameTagType::Npc => {
+            let union_shop_label = get_npc_union_store_label(game_data, object);
+
             if let Some((job, name)) = object.name.name.split_once(']') {
                 let mut job = job.trim().to_string();
                 job.push(']');
-                job.push('\n');
                 let name = name.trim();
+                let mut layout_job = if let Some(union_shop_label) = union_shop_label {
+                    let mut union_shop_label = union_shop_label.to_string();
+                    union_shop_label.push('\n');
 
-                let mut layout_job = egui::epaint::text::LayoutJob::single_section(
-                    job,
+                    egui::epaint::text::LayoutJob::single_section(
+                        union_shop_label,
+                        egui::TextFormat::simple(
+                            egui::FontId::proportional(name_tag_settings.font_size[name_tag_type]),
+                            egui::Color32::from_rgb(137, 243, 255),
+                        ),
+                    )
+                } else {
+                    egui::epaint::text::LayoutJob::default()
+                };
+
+                job.push('\n');
+                layout_job.append(
+                    &job,
+                    0.0,
                     egui::TextFormat::simple(
                         egui::FontId::proportional(name_tag_settings.font_size[name_tag_type]),
                         egui::Color32::from_rgb(255, 206, 174),
@@ -375,13 +408,29 @@ fn create_pending_nametag(
                 );
                 layout_job
             } else {
-                egui::epaint::text::LayoutJob::single_section(
-                    display_name,
+                let mut layout_job = if let Some(union_shop_label) = union_shop_label {
+                    let mut union_shop_label = union_shop_label.to_string();
+                    union_shop_label.push('\n');
+
+                    egui::epaint::text::LayoutJob::single_section(
+                        union_shop_label,
+                        egui::TextFormat::simple(
+                            egui::FontId::proportional(name_tag_settings.font_size[name_tag_type]),
+                            egui::Color32::from_rgb(137, 243, 255),
+                        ),
+                    )
+                } else {
+                    egui::epaint::text::LayoutJob::default()
+                };
+                layout_job.append(
+                    &display_name,
+                    0.0,
                     egui::TextFormat::simple(
                         egui::FontId::proportional(name_tag_settings.font_size[name_tag_type]),
                         egui::Color32::GREEN,
                     ),
-                )
+                );
+                layout_job
             }
         }
     };
@@ -563,7 +612,7 @@ fn create_nametag_data(
     image.sampler_descriptor = ImageSampler::Descriptor(ImageSampler::nearest_descriptor());
     let image = images.add(image);
 
-    let mut rects: ArrayVec<WorldUiRect, 2> = ArrayVec::new();
+    let mut rects: ArrayVec<WorldUiRect, MAX_NAME_ROWS> = ArrayVec::new();
     let mut row_offset_y = max_bounds.y - 8.0 * (pending_data.colors.len() - 1) as f32;
 
     if matches!(pending_data.name_tag_type, NameTagType::Monster) {
@@ -720,7 +769,7 @@ pub fn name_tag_system(
             NameTagType::Character
         };
 
-        let cache_key = get_name_tag_cache_key(&object, player.as_ref(), name_tag_type);
+        let cache_key = get_name_tag_cache_key(&object, player.as_ref(), &game_data, name_tag_type);
         let name_tag_data = if let Some(name_tag_data) = name_tag_cache.cache.get(&cache_key) {
             name_tag_data
         } else if let Some(pending_name_tag_data) = name_tag_cache.pending.remove(&object.entity) {
@@ -747,6 +796,7 @@ pub fn name_tag_system(
                 create_pending_nametag(
                     &name_tag_settings,
                     &mut egui_context,
+                    &game_data,
                     &object,
                     player.as_ref(),
                     name_tag_type,

@@ -9,7 +9,7 @@ use bevy_egui::{egui, EguiContexts};
 
 use rose_data::{Item, NpcData, NpcStoreTabData, NpcStoreTabId};
 use rose_game_common::{
-    components::{AbilityValues, Inventory, ItemSlot, Npc},
+    components::{AbilityValues, Inventory, ItemSlot, Npc, UnionMembership},
     messages::{
         client::{ClientMessage, NpcStoreBuyItem},
         ClientEntityId,
@@ -61,6 +61,7 @@ struct PendingSellItem {
 pub struct UiNpcStoreState {
     owner_entity: Option<(Entity, ClientEntityId)>,
     current_tab_index: i32,
+    union_store: Option<usize>,
     store_tabs: [Option<(NpcStoreTabId, String)>; 4],
     buy_list: [Option<PendingBuyItem>; NUM_BUY_ITEMS],
     sell_list: [Option<PendingSellItem>; NUM_SELL_ITEMS],
@@ -71,10 +72,39 @@ impl Default for UiNpcStoreState {
         Self {
             owner_entity: None,
             current_tab_index: IID_STORE_BTN_TAB1,
+            union_store: None,
             store_tabs: Default::default(),
             buy_list: Default::default(),
             sell_list: Default::default(),
         }
+    }
+}
+
+fn get_store_item_buy_price(
+    item_reference: Option<rose_data::ItemReference>,
+    item_data: Option<&rose_data::BaseItemData>,
+    player: Option<&NpcStorePlayerWorldQueryItem>,
+    game_data: &GameData,
+    world_rates: Option<&Res<WorldRates>>,
+    union_store: Option<usize>,
+) -> i64 {
+    let Some(item_reference) = item_reference else {
+        return 0;
+    };
+
+    if union_store.is_some() {
+        item_data.map_or(0, |item_data| i64::from(item_data.craft_difficulty))
+    } else {
+        game_data
+            .ability_value_calculator
+            .calculate_npc_store_item_buy_price(
+                &game_data.items,
+                item_reference,
+                player.map_or(0, |x| x.ability_values.get_npc_store_buy_rate()),
+                world_rates.map_or(100, |x| x.item_price_rate),
+                world_rates.map_or(100, |x| x.town_price_rate),
+            )
+            .unwrap_or(0) as i64
     }
 }
 
@@ -91,6 +121,7 @@ fn ui_add_store_item_slot(
     game_data: &GameData,
     ui_resources: &UiResources,
     world_rates: Option<&Res<WorldRates>>,
+    union_store: Option<usize>,
     number_input_dialog_events: &mut EventWriter<NumberInputDialogEvent>,
 ) {
     let item_reference =
@@ -103,20 +134,14 @@ fn ui_add_store_item_slot(
     });
     let quantity = None;
 
-    let item_price = if let Some(item_reference) = item_reference {
-        game_data
-            .ability_value_calculator
-            .calculate_npc_store_item_buy_price(
-                &game_data.items,
-                *item_reference,
-                player.map_or(0, |x| x.ability_values.get_npc_store_buy_rate()),
-                world_rates.map_or(100, |x| x.item_price_rate),
-                world_rates.map_or(100, |x| x.town_price_rate),
-            )
-            .unwrap_or(0) as i64
-    } else {
-        0
-    };
+    let item_price = get_store_item_buy_price(
+        item_reference.copied(),
+        item_data,
+        player,
+        game_data,
+        world_rates,
+        union_store,
+    );
 
     let mut dropped_item = None;
     let response = ui
@@ -177,8 +202,12 @@ fn ui_add_store_item_slot(
 
         response.on_hover_ui(|ui| {
             ui_add_item_tooltip(ui, game_data, player_tooltip_data, item);
-
-            ui.colored_label(egui::Color32::YELLOW, format!("Buy Price: {}", item_price));
+            let price_label = if union_store.is_some() {
+                format!("Union Points: {}", item_price)
+            } else {
+                format!("Buy Price: {}", item_price)
+            };
+            ui.colored_label(egui::Color32::YELLOW, price_label);
         });
     }
 }
@@ -206,6 +235,7 @@ fn ui_add_buy_item_slot(
     game_data: &GameData,
     ui_resources: &UiResources,
     world_rates: Option<&Res<WorldRates>>,
+    union_store: Option<usize>,
     number_input_dialog_events: &mut EventWriter<NumberInputDialogEvent>,
 ) -> i64 {
     let pending_buy_item = &mut buy_list[buy_slot_index];
@@ -235,21 +265,14 @@ fn ui_add_buy_item_slot(
         }
     });
 
-    let item_price = if let Some(item_reference) = item_reference {
-        game_data
-            .ability_value_calculator
-            .calculate_npc_store_item_buy_price(
-                &game_data.items,
-                *item_reference,
-                player.map_or(0, |player| player.ability_values.get_npc_store_buy_rate()),
-                world_rates.map_or(100, |x| x.item_price_rate),
-                world_rates.map_or(100, |x| x.town_price_rate),
-            )
-            .unwrap_or(0) as i64
-            * quantity.unwrap_or(1) as i64
-    } else {
-        0
-    };
+    let item_price = get_store_item_buy_price(
+        item_reference.copied(),
+        item_data,
+        player,
+        game_data,
+        world_rates,
+        union_store,
+    ) * quantity.unwrap_or(1) as i64;
 
     let mut dropped_item = None;
     let response = ui
@@ -282,8 +305,12 @@ fn ui_add_buy_item_slot(
     if let Some(item) = item {
         response.on_hover_ui(|ui| {
             ui_add_item_tooltip(ui, game_data, player_tooltip_data, &item);
-
-            ui.colored_label(egui::Color32::YELLOW, format!("Buy Price: {}", item_price));
+            let price_label = if union_store.is_some() {
+                format!("Union Points: {}", item_price)
+            } else {
+                format!("Buy Price: {}", item_price)
+            };
+            ui.colored_label(egui::Color32::YELLOW, price_label);
         });
     }
 
@@ -296,10 +323,10 @@ fn ui_add_buy_item_slot(
             .and_then(|store_tab| store_tab.items.get(&(store_tab_slot as u16)));
         let dropped_item_data = dropped_item_reference
             .and_then(|item_reference| game_data.items.get_base_item(*item_reference));
-        let dropped_item_obj = dropped_item_data
-            .and_then(|item_data| Item::from_item_data(item_data, 999));
-        let is_stackable = dropped_item_obj
-            .map_or(false, |item| item.get_item_type().is_stackable_item());
+        let dropped_item_obj =
+            dropped_item_data.and_then(|item_data| Item::from_item_data(item_data, 999));
+        let is_stackable =
+            dropped_item_obj.map_or(false, |item| item.get_item_type().is_stackable_item());
 
         if is_stackable {
             number_input_dialog_events.send(NumberInputDialogEvent::Show {
@@ -307,8 +334,7 @@ fn ui_add_buy_item_slot(
                 modal: false,
                 ok: Some(Box::new(move |commands, quantity| {
                     commands.add(move |world: &mut World| {
-                        let mut npc_store_events =
-                            world.resource_mut::<Events<NpcStoreEvent>>();
+                        let mut npc_store_events = world.resource_mut::<Events<NpcStoreEvent>>();
                         npc_store_events.send(NpcStoreEvent::AddToBuyList {
                             store_tab_index,
                             store_tab_slot,
@@ -417,6 +443,7 @@ pub struct NpcStorePlayerWorldQuery<'w> {
     inventory: &'w Inventory,
     position: &'w Position,
     player_character: &'w PlayerCharacter,
+    union_membership: &'w UnionMembership,
 }
 
 #[derive(WorldQuery)]
@@ -456,6 +483,9 @@ pub fn ui_npc_store_system(
             return;
         };
 
+    let player = query_player.get_single().ok();
+    let player_tooltip_data = query_player_tooltip.get_single().ok();
+
     for event in npc_store_events.iter() {
         match *event {
             NpcStoreEvent::OpenClientEntityStore(client_entity_id) => {
@@ -464,6 +494,20 @@ pub fn ui_npc_store_system(
                 if let Some(owner_entity) = client_entity_list.get(client_entity_id) {
                     if let Ok(npc) = query_npc.get(owner_entity) {
                         if let Some(npc_data) = game_data.npcs.get_npc(npc.npc.id) {
+                            if let Some(required_union) = npc_data.store_union_number {
+                                if player.as_ref().map_or(true, |player| {
+                                    player.union_membership.current_union != Some(required_union)
+                                }) {
+                                    message_box_events.send(MessageBoxEvent::Show {
+                                        message: "You cannot use this union store.".to_string(),
+                                        modal: true,
+                                        ok: Some(Box::new(|_| {})),
+                                        cancel: None,
+                                    });
+                                    continue;
+                                }
+                            }
+
                             for (index, id) in npc_data.store_tabs.iter().enumerate() {
                                 if let Some(id) = id {
                                     if let Some(store_tab) = game_data.npcs.get_store_tab(*id) {
@@ -473,6 +517,7 @@ pub fn ui_npc_store_system(
                                 }
                             }
 
+                            ui_state.union_store = npc_data.store_union_number.map(|x| x.get());
                             ui_state.owner_entity = Some((owner_entity, client_entity_id));
                         }
                     }
@@ -506,9 +551,6 @@ pub fn ui_npc_store_system(
             }
         }
     }
-
-    let player = query_player.get_single().ok();
-    let player_tooltip_data = query_player_tooltip.get_single().ok();
     let npc = ui_state
         .owner_entity
         .and_then(|(owner_entity, _)| query_npc.get(owner_entity).ok());
@@ -610,6 +652,7 @@ pub fn ui_npc_store_system(
                                     &game_data,
                                     &ui_resources,
                                     world_rates.as_ref(),
+                                    ui_state.union_store,
                                     &mut number_input_dialog_events,
                                 );
                             }
@@ -620,6 +663,7 @@ pub fn ui_npc_store_system(
         });
 
     let mut transaction_cost = 0;
+    let mut total_buy_price = 0;
 
     egui::Window::new("NPC Transaction")
         .frame(egui::Frame::none())
@@ -658,10 +702,17 @@ pub fn ui_npc_store_system(
                             &game_data,
                             &ui_resources,
                             world_rates.as_ref(),
+                            ui_state.union_store,
                             &mut number_input_dialog_events,
                         );
                     }
-                    ui.add_label_at(egui::pos2(39.0, 139.0), format!("{}", buy_item_price));
+                    let buy_total_text = if ui_state.union_store.is_some() {
+                        format!("{} UP", buy_item_price)
+                    } else {
+                        format!("{}", buy_item_price)
+                    };
+                    ui.add_label_at(egui::pos2(39.0, 139.0), buy_total_text);
+                    total_buy_price = buy_item_price;
                     transaction_cost += buy_item_price;
 
                     let mut sell_item_value = 0;
@@ -689,8 +740,14 @@ pub fn ui_npc_store_system(
         });
 
     if response_ok.map_or(false, |x| x.clicked()) {
-        let can_afford_transaction =
-            player.map_or(true, |player| transaction_cost <= player.inventory.money.0);
+        let can_afford_transaction = if let Some(union_number) = ui_state.union_store {
+            player.map_or(true, |player| {
+                total_buy_price
+                    <= player.union_membership.points[union_number.saturating_sub(1)] as i64
+            })
+        } else {
+            player.map_or(true, |player| transaction_cost <= player.inventory.money.0)
+        };
         // TODO: Check inventory space
 
         if can_afford_transaction {
@@ -720,8 +777,13 @@ pub fn ui_npc_store_system(
                     .ok();
             }
         } else {
+            let message = if ui_state.union_store.is_some() {
+                "You do not have enough Union Points for this transaction.".to_string()
+            } else {
+                "You do not have enough Zuly for this transaction.".to_string()
+            };
             message_box_events.send(MessageBoxEvent::Show {
-                message: "You do not have enough Zuly for this transaction.".to_string(),
+                message,
                 modal: true,
                 ok: Some(Box::new(|_| {})),
                 cancel: None,

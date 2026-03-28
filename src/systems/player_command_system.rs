@@ -640,10 +640,6 @@ pub fn player_command_system(
             }
             PlayerCommandEvent::EquipVehicle(item_slot) => {
                 if let Some(item) = player.inventory.get_item(item_slot) {
-                    let equip_sound_id = game_data
-                        .items
-                        .get_base_item(item.get_item_reference())
-                        .and_then(|item_data| item_data.equip_sound_id);
                     let vehicle_part_index = if let Some(item_data) =
                         game_data.items.get_base_item(item.get_item_reference())
                     {
@@ -668,18 +664,13 @@ pub fn player_command_system(
 
                     if let Some(vehicle_part_index) = vehicle_part_index {
                         if let Some(game_connection) = game_connection.as_ref() {
-                            if game_connection
+                            game_connection
                                 .client_message_tx
                                 .send(ClientMessage::ChangeVehiclePart {
                                     vehicle_part_index,
                                     item_slot: Some(item_slot),
                                 })
-                                .is_ok()
-                            {
-                                if let Some(sound_id) = equip_sound_id {
-                                    ui_sound_events.send(UiSoundEvent::new(sound_id));
-                                }
-                            }
+                                .ok();
                         }
                     }
                 }

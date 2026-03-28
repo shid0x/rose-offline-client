@@ -10,7 +10,7 @@ use crate::render::WorldUiRect;
 pub struct NameTagData {
     pub image: Handle<Image>,
     pub size: Vec2,
-    pub rects: ArrayVec<WorldUiRect, 2>, // NPC names are 2 rows
+    pub rects: ArrayVec<WorldUiRect, 3>, // NPC names can use up to 3 rows
 }
 
 #[allow(dead_code)]

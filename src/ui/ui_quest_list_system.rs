@@ -51,6 +51,43 @@ fn format_quest_abandon_confirm(template: &str, quest_name: &str) -> String {
     }
 }
 
+fn ui_add_truncated_single_line_label(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    text: &str,
+    color: egui::Color32,
+) -> bool {
+    let style = ui.style();
+    let mut font_id = style.override_text_style.clone().map_or_else(
+        || egui::FontSelection::Default.resolve(style),
+        |text_style| text_style.resolve(style),
+    );
+    font_id.size = 12.0;
+
+    let mut layout_job = egui::epaint::text::LayoutJob::single_section(
+        text.to_string(),
+        egui::TextFormat::simple(font_id, color),
+    );
+    layout_job.wrap = egui::epaint::text::TextWrapping {
+        max_width: rect.width(),
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('\u{2026}'),
+    };
+
+    let galley = ui.fonts(|fonts| fonts.layout_job(layout_job));
+    let was_truncated = galley
+        .rows
+        .last()
+        .and_then(|row| row.glyphs.last())
+        .map_or(false, |glyph| glyph.chr == '\u{2026}');
+    ui.painter()
+        .with_clip_rect(rect)
+        .add(egui::Shape::galley(rect.min, galley));
+
+    was_truncated
+}
+
 fn ui_add_quest_item_slot(
     ui: &mut egui::Ui,
     pos: egui::Pos2,
@@ -208,11 +245,15 @@ pub fn ui_quest_list_system(
                             let item_height = 24.0;
                             let item_width = 174.0;
                             let y_offset = index as f32 * item_height;
+                            let title_rect = egui::Rect::from_min_size(
+                                ui.min_rect().min + egui::vec2(27.0, y_offset + 5.0),
+                                egui::vec2(143.0, 19.0),
+                            );
                             let rect = egui::Rect::from_min_size(
                                 ui.min_rect().min + egui::vec2(0.0, y_offset),
                                 egui::vec2(item_width, item_height),
                             );
-                            let response = ui.allocate_rect(rect, egui::Sense::click());
+                            let mut response = ui.allocate_rect(rect, egui::Sense::click());
 
                             if let Some(visible_quest) = visible_quests.get(index as usize) {
                                 if visible_quest.quest_data.icon_id != 0 {
@@ -224,17 +265,21 @@ pub fn ui_quest_list_system(
                                     }
                                 }
 
-                                ui.painter().text(
-                                    rect.min + egui::vec2(28.0, 4.0),
-                                    egui::Align2::LEFT_TOP,
+                                let was_truncated = ui_add_truncated_single_line_label(
+                                    ui,
+                                    title_rect,
                                     visible_quest.quest_data.name,
-                                    egui::FontId::default(),
                                     if selected {
                                         egui::Color32::YELLOW
                                     } else {
                                         egui::Color32::WHITE
                                     },
                                 );
+
+                                if was_truncated {
+                                    response =
+                                        response.on_hover_text(visible_quest.quest_data.name);
+                                }
                             }
 
                             response
@@ -272,14 +317,21 @@ pub fn ui_quest_list_system(
                             }
                         }
 
-                        ui.allocate_ui_at_rect(rect_info.translate(egui::vec2(43.0, 38.0)), |ui| {
-                            ui.horizontal_top(|ui| {
-                                ui.add(egui::Label::new(
-                                    egui::RichText::new(selected_quest.quest_data.name)
-                                        .color(egui::Color32::YELLOW),
-                                ));
-                            })
-                        });
+                        let title_rect = egui::Rect::from_min_size(
+                            rect_info.min + egui::vec2(42.0, 39.0),
+                            egui::vec2(143.0, 19.0),
+                        );
+                        let title_response = ui.allocate_rect(title_rect, egui::Sense::hover());
+                        let was_truncated = ui_add_truncated_single_line_label(
+                            ui,
+                            title_rect,
+                            selected_quest.quest_data.name,
+                            egui::Color32::YELLOW,
+                        );
+
+                        if was_truncated {
+                            title_response.on_hover_text(selected_quest.quest_data.name);
+                        }
 
                         if let Some(Widget::Listbox(listbox)) =
                             dialog.get_widget(IID_LIST_QUESTINFO)

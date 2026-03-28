@@ -5,9 +5,11 @@ use bevy::{
 use bevy_egui::{egui, EguiContexts};
 use enum_map::{enum_map, EnumMap};
 
-use rose_data::{AmmoIndex, EquipmentIndex, Item, ItemClass, ItemType, VehiclePartIndex};
+use rose_data::{
+    AmmoIndex, EquipmentIndex, Item, ItemClass, ItemType, VehiclePartIndex, VehicleType,
+};
 use rose_game_common::components::{
-    Equipment, Inventory, InventoryPageType, ItemSlot, INVENTORY_PAGE_SIZE,
+    AbilityValues, Equipment, Inventory, InventoryPageType, ItemSlot, INVENTORY_PAGE_SIZE,
 };
 
 use crate::{
@@ -139,6 +141,178 @@ const VEHICLE_GRID_SLOTS: [(rose_game_common::components::ItemSlot, egui::Pos2);
         egui::pos2(19.0, 206.0),
     ),
 ];
+
+const TUNING_STAT_VALUE_X: f32 = 153.0;
+const TUNING_TYPE_VALUE_Y: f32 = 67.0;
+const TUNING_DEF_VALUE_Y: f32 = 89.0;
+const TUNING_MDEF_VALUE_Y: f32 = 113.0;
+const TUNING_FUEL_VALUE_Y: f32 = 135.0;
+const TUNING_SPEED_VALUE_Y: f32 = 159.0;
+const TUNING_ATK_VALUE_Y: f32 = 181.0;
+const TUNING_ASPD_VALUE_Y: f32 = 203.0;
+const TUNING_STAT_VALUE_WIDTH: f32 = 58.0;
+const TUNING_TYPE_VALUE_WIDTH: f32 = 62.0;
+const TUNING_STAT_VALUE_HEIGHT: f32 = 16.0;
+const TUNING_STAT_TEXT_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 245, 214);
+const TUNING_STAT_FONT_SIZE: f32 = 10.0;
+const TUNING_TYPE_FONT_SIZE: f32 = 11.0;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct VehicleTuningStats {
+    vehicle_type_label: &'static str,
+    defence: i32,
+    magic_defence: i32,
+    fuel_consumption: u32,
+    speed: i32,
+    attack: i32,
+    attack_speed: i32,
+}
+
+impl VehicleTuningStats {
+    fn from_sources(
+        equipment: &Equipment,
+        ability_values: &AbilityValues,
+        game_data: &GameData,
+    ) -> Self {
+        let body_vehicle_type = equipment
+            .get_vehicle_item(VehiclePartIndex::Body)
+            .and_then(|item| game_data.items.get_vehicle_item(item.item.item_number))
+            .map(|item_data| item_data.vehicle_type);
+        let engine_fuel_use_rate = equipment
+            .get_vehicle_item(VehiclePartIndex::Engine)
+            .and_then(|item| game_data.items.get_vehicle_item(item.item.item_number))
+            .map(|item_data| item_data.fuel_use_rate);
+
+        Self::from_resolved_parts(body_vehicle_type, engine_fuel_use_rate, ability_values)
+    }
+
+    fn from_resolved_parts(
+        body_vehicle_type: Option<VehicleType>,
+        engine_fuel_use_rate: Option<u32>,
+        ability_values: &AbilityValues,
+    ) -> Self {
+        let Some(body_vehicle_type) = body_vehicle_type else {
+            return Self {
+                vehicle_type_label: "-",
+                defence: 0,
+                magic_defence: 0,
+                fuel_consumption: 0,
+                speed: 0,
+                attack: 0,
+                attack_speed: 0,
+            };
+        };
+
+        Self {
+            vehicle_type_label: match body_vehicle_type {
+                VehicleType::Cart => "Cart",
+                VehicleType::CastleGear => "Castle Gear",
+            },
+            defence: (ability_values.vehicle_defence + ability_values.adjust.defence).max(0),
+            magic_defence: (ability_values.resistance + ability_values.adjust.resistance).max(0),
+            fuel_consumption: engine_fuel_use_rate.unwrap_or(0),
+            speed: (ability_values.vehicle_move_speed + ability_values.adjust.run_speed)
+                .max(0.0)
+                .round() as i32,
+            attack: (ability_values.vehicle_attack_power + ability_values.adjust.attack_power)
+                .max(0),
+            attack_speed: (ability_values.vehicle_attack_speed
+                + ability_values.adjust.attack_speed)
+                .max(0),
+        }
+    }
+}
+
+fn draw_tuning_stat_text(ui: &egui::Ui, rect: egui::Rect, text: &str, font_size: f32) {
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        egui::FontId::proportional(font_size),
+        TUNING_STAT_TEXT_COLOR,
+    );
+}
+
+fn draw_vehicle_tuning_stats(ui: &egui::Ui, stats: &VehicleTuningStats) {
+    let min = ui.min_rect().min;
+    let draw_rect = |x: f32, y: f32, width: f32| {
+        egui::Rect::from_min_size(
+            min + egui::vec2(x, y),
+            egui::vec2(width, TUNING_STAT_VALUE_HEIGHT),
+        )
+    };
+
+    draw_tuning_stat_text(
+        ui,
+        draw_rect(
+            TUNING_STAT_VALUE_X + 1.0,
+            TUNING_TYPE_VALUE_Y,
+            TUNING_TYPE_VALUE_WIDTH,
+        ),
+        stats.vehicle_type_label,
+        TUNING_TYPE_FONT_SIZE,
+    );
+    draw_tuning_stat_text(
+        ui,
+        draw_rect(
+            TUNING_STAT_VALUE_X + 6.0,
+            TUNING_DEF_VALUE_Y - 2.0,
+            TUNING_STAT_VALUE_WIDTH,
+        ),
+        &stats.defence.to_string(),
+        TUNING_STAT_FONT_SIZE,
+    );
+    draw_tuning_stat_text(
+        ui,
+        draw_rect(
+            TUNING_STAT_VALUE_X + 6.0,
+            TUNING_MDEF_VALUE_Y - 2.0,
+            TUNING_STAT_VALUE_WIDTH,
+        ),
+        &stats.magic_defence.to_string(),
+        TUNING_STAT_FONT_SIZE,
+    );
+    draw_tuning_stat_text(
+        ui,
+        draw_rect(
+            TUNING_STAT_VALUE_X + 6.0,
+            TUNING_FUEL_VALUE_Y - 1.0,
+            TUNING_STAT_VALUE_WIDTH,
+        ),
+        &stats.fuel_consumption.to_string(),
+        TUNING_STAT_FONT_SIZE,
+    );
+    draw_tuning_stat_text(
+        ui,
+        draw_rect(
+            TUNING_STAT_VALUE_X + 6.0,
+            TUNING_SPEED_VALUE_Y - 1.0,
+            TUNING_STAT_VALUE_WIDTH,
+        ),
+        &stats.speed.to_string(),
+        TUNING_STAT_FONT_SIZE,
+    );
+    draw_tuning_stat_text(
+        ui,
+        draw_rect(
+            TUNING_STAT_VALUE_X + 6.0,
+            TUNING_ATK_VALUE_Y + 23.0,
+            TUNING_STAT_VALUE_WIDTH,
+        ),
+        &stats.attack.to_string(),
+        TUNING_STAT_FONT_SIZE,
+    );
+    draw_tuning_stat_text(
+        ui,
+        draw_rect(
+            TUNING_STAT_VALUE_X + 6.0,
+            TUNING_ASPD_VALUE_Y + 23.0,
+            TUNING_STAT_VALUE_WIDTH,
+        ),
+        &stats.attack_speed.to_string(),
+        TUNING_STAT_FONT_SIZE,
+    );
+}
 
 fn drag_accepts_equipment(drag_source: &DragAndDropId) -> bool {
     matches!(
@@ -503,6 +677,7 @@ fn ui_add_inventory_slot(
 
 #[derive(WorldQuery)]
 pub struct PlayerQuery<'w> {
+    ability_values: &'w AbilityValues,
     equipment: &'w Equipment,
     inventory: &'w Inventory,
     cooldowns: &'w Cooldowns,
@@ -639,6 +814,13 @@ pub fn ui_inventory_system(
                                         &mut personal_store_events,
                                     );
                                 }
+
+                                let tuning_stats = VehicleTuningStats::from_sources(
+                                    player.equipment,
+                                    player.ability_values,
+                                    &game_data,
+                                );
+                                draw_vehicle_tuning_stats(ui, &tuning_stats);
                             }
 
                             current_page = InventoryPageType::Vehicles;
@@ -756,5 +938,149 @@ pub fn ui_inventory_system(
             })),
             cancel: None,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::VehicleTuningStats;
+    use rose_data::VehicleType;
+    use rose_game_common::components::{
+        AbilityValues, AbilityValuesAdjust, DamageCategory, DamageType,
+    };
+
+    fn test_ability_values() -> AbilityValues {
+        AbilityValues {
+            is_driving: false,
+            damage_category: DamageCategory::Character,
+            level: 1,
+            walk_speed: 200.0,
+            run_speed: 300.0,
+            vehicle_move_speed: 420.0,
+            strength: 0,
+            dexterity: 0,
+            intelligence: 0,
+            concentration: 0,
+            charm: 0,
+            sense: 0,
+            max_health: 0,
+            max_mana: 0,
+            additional_health_recovery: 0,
+            additional_mana_recovery: 0,
+            attack_damage_type: DamageType::Physical,
+            attack_power: 0,
+            attack_speed: 0,
+            passive_attack_speed: 0,
+            attack_range: 0,
+            hit: 0,
+            defence: 0,
+            resistance: 88,
+            critical: 0,
+            avoid: 0,
+            vehicle_attack_power: 77,
+            vehicle_attack_range: 0,
+            vehicle_attack_speed: 123,
+            vehicle_hit: 0,
+            vehicle_defence: 66,
+            vehicle_critical: 0,
+            vehicle_avoid: 0,
+            max_damage_sources: 0,
+            drop_rate: 0,
+            max_weight: 0,
+            summon_owner_level: None,
+            summon_skill_level: None,
+            adjust: AbilityValuesAdjust {
+                additional_damage_multiplier: 0.0,
+                attack_speed: 7,
+                attack_power: 5,
+                avoid: 0,
+                critical: 0,
+                defence: 3,
+                hit: 0,
+                resistance: 2,
+                max_health: 0,
+                max_mana: 0,
+                run_speed: 4.0,
+            },
+            npc_store_buy_rate: 0,
+            npc_store_sell_rate: 0,
+            save_mana: 0,
+            passive_max_summons: 0,
+        }
+    }
+
+    #[test]
+    fn tuning_stats_full_cart() {
+        let stats = VehicleTuningStats::from_resolved_parts(
+            Some(VehicleType::Cart),
+            Some(12),
+            &test_ability_values(),
+        );
+
+        assert_eq!(stats.vehicle_type_label, "Cart");
+        assert_eq!(stats.defence, 69);
+        assert_eq!(stats.magic_defence, 90);
+        assert_eq!(stats.fuel_consumption, 12);
+        assert_eq!(stats.speed, 424);
+        assert_eq!(stats.attack, 82);
+        assert_eq!(stats.attack_speed, 130);
+    }
+
+    #[test]
+    fn tuning_stats_full_castle_gear() {
+        let stats = VehicleTuningStats::from_resolved_parts(
+            Some(VehicleType::CastleGear),
+            Some(8),
+            &test_ability_values(),
+        );
+
+        assert_eq!(stats.vehicle_type_label, "Castle Gear");
+        assert_eq!(stats.fuel_consumption, 8);
+        assert_eq!(stats.speed, 424);
+    }
+
+    #[test]
+    fn tuning_stats_no_body() {
+        let stats = VehicleTuningStats::from_resolved_parts(None, Some(12), &test_ability_values());
+
+        assert_eq!(stats.vehicle_type_label, "-");
+        assert_eq!(stats.defence, 0);
+        assert_eq!(stats.magic_defence, 0);
+        assert_eq!(stats.fuel_consumption, 0);
+        assert_eq!(stats.speed, 0);
+        assert_eq!(stats.attack, 0);
+        assert_eq!(stats.attack_speed, 0);
+    }
+
+    #[test]
+    fn tuning_stats_no_engine() {
+        let mut ability_values = test_ability_values();
+        ability_values.vehicle_move_speed = 200.0;
+        ability_values.adjust.run_speed = 0.0;
+
+        let stats =
+            VehicleTuningStats::from_resolved_parts(Some(VehicleType::Cart), None, &ability_values);
+
+        assert_eq!(stats.vehicle_type_label, "Cart");
+        assert_eq!(stats.fuel_consumption, 0);
+        assert_eq!(stats.speed, 200);
+    }
+
+    #[test]
+    fn tuning_stats_no_arms() {
+        let mut ability_values = test_ability_values();
+        ability_values.vehicle_attack_power = 0;
+        ability_values.vehicle_attack_speed = 300;
+        ability_values.adjust.attack_power = 0;
+        ability_values.adjust.attack_speed = 0;
+
+        let stats = VehicleTuningStats::from_resolved_parts(
+            Some(VehicleType::Cart),
+            Some(12),
+            &ability_values,
+        );
+
+        assert_eq!(stats.attack, 0);
+        assert_eq!(stats.attack_speed, 300);
     }
 }
