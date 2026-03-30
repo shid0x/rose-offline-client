@@ -13,6 +13,11 @@ use crate::{
     render::ParticleRenderData,
 };
 
+// Large frame hitches can make particle systems spawn and simulate a burst of
+// catch-up work in a single frame, which tends to prolong the hitch. Cap the
+// simulation step so particles recover smoothly instead of amplifying stalls.
+const MAX_PARTICLE_DELTA_SECONDS: f32 = 0.05;
+
 fn rng_gen_range<R: Rng>(rng: &mut R, range: &RangeInclusive<f32>) -> f32 {
     // This function is intentionally written this way to match the
     // original ROSE engine code to behave the same when fmin > fmax
@@ -290,7 +295,7 @@ pub fn particle_sequence_system(
     )>,
 ) {
     let mut rng = rand::thread_rng();
-    let delta_time = time.delta_seconds();
+    let delta_time = time.delta_seconds().min(MAX_PARTICLE_DELTA_SECONDS);
 
     for (global_transform, mut particle_sequence, mut particle_render_data) in query.iter_mut() {
         if particle_sequence.start_delay > 0.0 {

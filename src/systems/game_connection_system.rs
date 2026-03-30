@@ -24,9 +24,9 @@ use rose_game_common::{
     messages::{
         client::ClientMessage,
         server::{
-            ClanCreateError, ClanUpgradeResult, LearnSkillError, LevelUpSkillError,
-            PartyMemberInfo, PartyMemberInfoOffline, PersonalStoreTransactionStatus,
-            PickupItemDropError, ServerMessage, SpawnCommandState,
+            ActiveStatusEffects, ClanCreateError, ClanUpgradeResult, LearnSkillError,
+            LevelUpSkillError, PartyMemberInfo, PartyMemberInfoOffline,
+            PersonalStoreTransactionStatus, PickupItemDropError, ServerMessage, SpawnCommandState,
         },
         PartyItemSharing, PartyXpSharing,
     },
@@ -38,11 +38,11 @@ use crate::{
     bundles::{ability_values_add_value_exclusive, ability_values_set_value_exclusive},
     components::{
         Bank, Clan, ClanMember, ClanMembership, ClientEntity, ClientEntityName, ClientEntityType,
-        CollisionHeightOnly, CollisionPlayer, Command, CommandCastSkillTarget, Cooldowns, Dead,
-        FacingDirection, NextCommand, PartyInfo, PartyOwner, PassiveRecoveryTime, PendingDamage,
-        PendingDamageList, PendingSkillEffect, PendingSkillEffectList, PendingSkillTarget,
-        PendingSkillTargetList, PersonalStore, PlayerCharacter, Position, SoundCategory,
-        SummonPoints, VisibleStatusEffects,
+        CollisionHeightOnly, CollisionPlayer, CollisionPlayerGrounding, Command,
+        CommandCastSkillTarget, Cooldowns, Dead, FacingDirection, NextCommand, PartyInfo,
+        PartyOwner, PassiveRecoveryTime, PendingDamage, PendingDamageList, PendingSkillEffect,
+        PendingSkillEffectList, PendingSkillTarget, PendingSkillTargetList, PersonalStore,
+        PlayerCharacter, Position, SoundCategory, SummonPoints, VisibleStatusEffects,
     },
     events::{
         BankEvent, ChatboxEvent, ClientEntityEvent, CraftEvent, GameConnectionEvent, HitEvent,
@@ -61,6 +61,53 @@ const GET_ITEM_SOUND_ID: u16 = 531;
 
 fn party_level_up_event(player_entity: Entity, is_level_up: bool) -> Option<ClientEntityEvent> {
     is_level_up.then_some(ClientEntityEvent::PartyLevelUp(player_entity))
+}
+
+fn apply_status_effect_updates(
+    status_effects: &mut StatusEffects,
+    update_status_effects: &ActiveStatusEffects,
+    updated_values: &[i32],
+) -> (Option<i32>, Option<i32>) {
+    let mut updated_hp = None;
+    let mut updated_mp = None;
+
+    for (status_effect_type, active) in update_status_effects.iter() {
+        match active {
+            Some(active) => {
+                status_effects.active[status_effect_type] = Some(active.clone());
+                status_effects.expire_times[status_effect_type] = None;
+            }
+            None => {
+                if status_effects.active[status_effect_type].is_some() {
+                    match status_effect_type {
+                        StatusEffectType::IncreaseHp => {
+                            updated_hp = updated_values.first().cloned();
+                        }
+                        StatusEffectType::IncreaseMp => {
+                            updated_mp = updated_values.last().cloned();
+                        }
+                        _ => {}
+                    }
+                }
+
+                status_effects.active[status_effect_type] = None;
+                status_effects.expire_times[status_effect_type] = None;
+            }
+        }
+    }
+
+    (updated_hp, updated_mp)
+}
+
+fn clear_missing_status_effect_regen(
+    status_effects_regen: &mut StatusEffectsRegen,
+    update_status_effects: &ActiveStatusEffects,
+) {
+    for (status_effect_type, active) in update_status_effects.iter() {
+        if active.is_none() {
+            status_effects_regen.regens[status_effect_type] = None;
+        }
+    }
 }
 
 fn queue_bonfire_cast_sound(
@@ -723,9 +770,28 @@ pub fn game_connection_system(
             }
             Ok(ServerMessage::AdjustPosition { entity_id, position }) => {
                 if let Some(entity) = client_entity_list.get(entity_id) {
-                    commands
-                        .entity(entity)
-                        .insert(NextCommand::with_move(position, None, None));
+                    let is_player_entity = client_entity_list.player_entity_id == Some(entity_id);
+
+                    if is_player_entity {
+                        commands.entity(entity).remove::<Dead>().insert((
+                            Position::new(position),
+                            Transform::from_xyz(
+                                position.x / 100.0,
+                                position.z / 100.0,
+                                -position.y / 100.0,
+                            ),
+                            CollisionPlayerGrounding,
+                            Command::with_stop(),
+                            NextCommand::with_stop(),
+                            PendingDamageList::default(),
+                            PendingSkillEffectList::default(),
+                            PendingSkillTargetList::default(),
+                        ));
+                    } else {
+                        commands
+                            .entity(entity)
+                            .insert(NextCommand::with_move(position, None, None));
+                    }
                 }
             }
             Ok(ServerMessage::StopMoveEntity { entity_id, x: _, y: _, z: _ }) => {
@@ -1309,40 +1375,19 @@ pub fn game_connection_system(
                         let mut updated_hp = None;
                         let mut updated_mp = None;
 
-                        // Clear StatusEffects for status effects which do not exist in the packet
                         if let Some(mut status_effects) = entity_mut.get_mut::<StatusEffects>() {
-                            for (status_effect_type, active) in update_status_effects.iter() {
-                                if active.is_some() {
-                                    continue;
-                                }
-
-                                if status_effects.active[status_effect_type].is_some() {
-                                    match status_effect_type {
-                                        StatusEffectType::IncreaseHp => {
-                                            updated_hp = updated_values.first().cloned();
-                                        },
-                                        StatusEffectType::IncreaseMp => {
-                                            updated_mp = updated_values.last().cloned();
-                                        },
-                                        _ => {}
-                                    }
-                                    status_effects.active[status_effect_type] = None;
-                                    status_effects.expire_times[status_effect_type] = None;
-                                }
-                            }
+                            (updated_hp, updated_mp) = apply_status_effect_updates(
+                                &mut status_effects,
+                                &update_status_effects,
+                                &updated_values,
+                            );
                         }
 
-                        // Clear StatusEffectsRegen for status effects which do not exist in the packet
                         if let Some(mut status_effects_regen) = entity_mut.get_mut::<StatusEffectsRegen>() {
-                            for (status_effect_type, active) in update_status_effects {
-                                if active.is_some() {
-                                    continue;
-                                }
-
-                                if status_effects_regen.regens[status_effect_type].is_some() {
-                                    status_effects_regen.regens[status_effect_type] = None;
-                                }
-                            }
+                            clear_missing_status_effect_regen(
+                                &mut status_effects_regen,
+                                &update_status_effects,
+                            );
                         }
 
                         if let Some(updated_hp) = updated_hp {
@@ -2962,10 +3007,21 @@ pub fn game_connection_system(
 
 #[cfg(test)]
 mod tests {
-    use super::{party_level_up_event, reward_money_diff, sync_reward_money};
+    use super::{
+        apply_status_effect_updates, clear_missing_status_effect_regen, party_level_up_event,
+        reward_money_diff, sync_reward_money,
+    };
     use crate::events::ClientEntityEvent;
     use bevy::prelude::Entity;
-    use rose_game_common::components::{Inventory, Money};
+    use rose_data::{StatusEffectId, StatusEffectType};
+    use rose_game_common::{
+        components::{
+            ActiveStatusEffect, ActiveStatusEffectRegen, Inventory, Money, StatusEffects,
+            StatusEffectsRegen,
+        },
+        messages::server::ActiveStatusEffects,
+    };
+    use std::time::Duration;
 
     #[test]
     fn party_level_xp_level_up_emits_party_level_up_event() {
@@ -3010,5 +3066,56 @@ mod tests {
     fn reward_money_diff_uses_absolute_totals() {
         assert_eq!(reward_money_diff(Money(10_000), Money(8_000)), -2_000);
         assert_eq!(reward_money_diff(Money(10_000), Money(12_000)), 2_000);
+    }
+
+    #[test]
+    fn update_status_effects_applies_poison_without_fabricating_expire_time() {
+        let mut status_effects = StatusEffects::default();
+        let mut update_status_effects = ActiveStatusEffects::default();
+        let poison = ActiveStatusEffect {
+            id: StatusEffectId::new(7).unwrap(),
+            value: 9,
+        };
+
+        update_status_effects[StatusEffectType::Poisoned] = Some(poison.clone());
+
+        let (updated_hp, updated_mp) =
+            apply_status_effect_updates(&mut status_effects, &update_status_effects, &[]);
+
+        let active_poison = status_effects.active[StatusEffectType::Poisoned]
+            .as_ref()
+            .expect("poison should be applied");
+        assert_eq!(active_poison.id, poison.id);
+        assert_eq!(active_poison.value, poison.value);
+        assert!(status_effects.expire_times[StatusEffectType::Poisoned].is_none());
+        assert!(updated_hp.is_none());
+        assert!(updated_mp.is_none());
+    }
+
+    #[test]
+    fn update_status_effects_clear_removes_poison_and_stale_regen() {
+        let mut status_effects = StatusEffects::default();
+        let mut status_effects_regen = StatusEffectsRegen::default();
+        let mut update_status_effects = ActiveStatusEffects::default();
+
+        status_effects.active[StatusEffectType::Poisoned] = Some(ActiveStatusEffect {
+            id: StatusEffectId::new(7).unwrap(),
+            value: 9,
+        });
+        status_effects.expire_times[StatusEffectType::Poisoned] = Some(std::time::Instant::now());
+        status_effects_regen.regens[StatusEffectType::Poisoned] = Some(ActiveStatusEffectRegen {
+            total_value: 30,
+            value_per_second: 3,
+            applied_value: 6,
+            applied_duration: Duration::from_secs(2),
+        });
+        update_status_effects[StatusEffectType::Poisoned] = None;
+
+        apply_status_effect_updates(&mut status_effects, &update_status_effects, &[]);
+        clear_missing_status_effect_regen(&mut status_effects_regen, &update_status_effects);
+
+        assert!(status_effects.active[StatusEffectType::Poisoned].is_none());
+        assert!(status_effects.expire_times[StatusEffectType::Poisoned].is_none());
+        assert!(status_effects_regen.regens[StatusEffectType::Poisoned].is_none());
     }
 }

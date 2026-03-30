@@ -1,3 +1,8 @@
+use std::{
+    collections::HashMap,
+    sync::{OnceLock, RwLock},
+};
+
 use bevy::{
     hierarchy::BuildChildren,
     math::{Quat, Vec3},
@@ -12,6 +17,7 @@ use bevy::{
     },
 };
 use rose_file_readers::{EftFile, EftMesh, EftParticle, PtlFile, VfsPath, VirtualFilesystem};
+use rose_file_readers::VfsPathBuf;
 
 use crate::{
     animation::MeshAnimation,
@@ -24,6 +30,41 @@ use crate::{
     zms_asset_loader::ZmsNoSkinAssetLoader,
 };
 
+#[derive(Default)]
+struct EffectFileCache {
+    eft_files: HashMap<VfsPathBuf, EftFile>,
+    ptl_files: HashMap<VfsPathBuf, PtlFile>,
+}
+
+static EFFECT_FILE_CACHE: OnceLock<RwLock<EffectFileCache>> = OnceLock::new();
+
+fn effect_file_cache() -> &'static RwLock<EffectFileCache> {
+    EFFECT_FILE_CACHE.get_or_init(|| RwLock::new(EffectFileCache::default()))
+}
+
+fn load_eft_file(vfs: &VirtualFilesystem, effect_path: VfsPath) -> Option<EftFile> {
+    let cache_key = VfsPathBuf::from(&effect_path);
+    let mut cache = effect_file_cache().write().ok()?;
+
+    if !cache.eft_files.contains_key(&cache_key) {
+        let eft_file = vfs.read_file::<EftFile, _>(&cache_key).ok()?;
+        cache.eft_files.insert(cache_key.clone(), eft_file);
+    }
+
+    cache.eft_files.get(&cache_key).cloned()
+}
+
+fn load_ptl_file(vfs: &VirtualFilesystem, particle_path: &VfsPathBuf) -> Option<PtlFile> {
+    let mut cache = effect_file_cache().write().ok()?;
+
+    if !cache.ptl_files.contains_key(particle_path) {
+        let ptl_file = vfs.read_file::<PtlFile, _>(particle_path).ok()?;
+        cache.ptl_files.insert(particle_path.clone(), ptl_file);
+    }
+
+    cache.ptl_files.get(particle_path).cloned()
+}
+
 pub fn spawn_effect(
     vfs: &VirtualFilesystem,
     commands: &mut Commands,
@@ -34,11 +75,10 @@ pub fn spawn_effect(
     manual_despawn: bool,
     effect_entity: Option<Entity>,
 ) -> Option<Entity> {
-    // TODO: We need caching to avoid loading from file every time
-    let eft_file = vfs.read_file::<EftFile, _>(effect_path).ok()?;
+    let eft_file = load_eft_file(vfs, effect_path)?;
 
     let mut child_entities = Vec::with_capacity(eft_file.particles.len());
-    for eft_particle in eft_file.particles {
+    for eft_particle in &eft_file.particles {
         if let Some(particle_entity) = spawn_particle(
             vfs,
             commands,
@@ -50,7 +90,7 @@ pub fn spawn_effect(
         }
     }
 
-    for eft_particle in eft_file.meshes {
+    for eft_particle in &eft_file.meshes {
         if let Some(mesh_entity) =
             spawn_mesh(commands, asset_server, effect_mesh_materials, &eft_particle)
         {
@@ -209,9 +249,7 @@ fn spawn_particle(
     particle_materials: &mut Assets<ParticleMaterial>,
     eft_particle: &EftParticle,
 ) -> Option<Entity> {
-    let ptl_file = vfs
-        .read_file::<PtlFile, _>(&eft_particle.particle_file)
-        .ok()?;
+    let ptl_file = load_ptl_file(vfs, &eft_particle.particle_file)?;
 
     // TODO: eft_particle.is_linked
 
@@ -235,7 +273,7 @@ fn spawn_particle(
                 ComputedVisibility::default(),
             ))
             .with_children(|child_builder| {
-                for sequence in ptl_file.sequences {
+                for sequence in &ptl_file.sequences {
                     let mut entity_comands = child_builder.spawn((
                         EffectParticle {},
                         ParticleRenderData::new(
@@ -253,7 +291,7 @@ fn spawn_particle(
                         particle_materials.add(ParticleMaterial {
                             texture: asset_server.load(sequence.texture_path.path()),
                         }),
-                        ParticleSequence::from(sequence)
+                        ParticleSequence::from(sequence.clone())
                             .with_start_delay(eft_particle.start_delay as f32 / 1000.0),
                         Transform::default(),
                         GlobalTransform::default(),

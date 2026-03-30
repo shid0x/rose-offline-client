@@ -1,7 +1,8 @@
 use bevy::{
     math::{Quat, Vec3, Vec3Swizzles},
     prelude::{
-        Assets, Changed, Commands, Entity, EventWriter, Or, Query, Res, Time, Transform, With,
+        Added, Assets, Changed, Commands, Entity, EventWriter, Or, Query, Res, Time, Transform,
+        With,
     },
 };
 use bevy_rapier3d::prelude::{Collider, CollisionGroups, Group, QueryFilter, RapierContext};
@@ -11,10 +12,11 @@ use rose_game_common::messages::client::ClientMessage;
 
 use crate::{
     components::{
-        ColliderParent, CollisionHeightOnly, CollisionPlayer, EventObject, NextCommand, Position,
-        WarpObject, COLLISION_FILTER_COLLIDABLE, COLLISION_FILTER_GROUND_SUPPORT,
-        COLLISION_GROUP_PHYSICS_TOY, COLLISION_GROUP_ZONE_EVENT_OBJECT,
-        COLLISION_GROUP_ZONE_TERRAIN, COLLISION_GROUP_ZONE_WARP_OBJECT,
+        ColliderParent, CollisionHeightOnly, CollisionPlayer, CollisionPlayerGrounding,
+        EventObject, NextCommand, Position, WarpObject, COLLISION_FILTER_COLLIDABLE,
+        COLLISION_FILTER_GROUND_SUPPORT, COLLISION_GROUP_PHYSICS_TOY,
+        COLLISION_GROUP_ZONE_EVENT_OBJECT, COLLISION_GROUP_ZONE_TERRAIN,
+        COLLISION_GROUP_ZONE_WARP_OBJECT,
     },
     events::{QuestTriggerEvent, SystemFuncEvent},
     resources::{CurrentZone, GameConnection, GameData},
@@ -98,6 +100,34 @@ fn get_join_reference_height(zone_data: &ZoneData, position: &Position) -> Optio
     closest_match.map(|(_, height)| height)
 }
 
+fn resolve_player_ground_height(
+    zone_data: &ZoneData,
+    current_zone_data: &ZoneLoaderAsset,
+    rapier_context: &RapierContext,
+    position: &Position,
+    reference_height: Option<f32>,
+) -> f32 {
+    let terrain_height = current_zone_data.get_terrain_height(position.x, position.y) / 100.0;
+    let probe_base_height = reference_height
+        .unwrap_or(terrain_height)
+        .max(terrain_height);
+
+    // Prefer supports near the intended spawn anchor when available, otherwise stay close to
+    // terrain so ceilings and chandeliers do not override the spawn floor.
+    let collision_height =
+        cast_join_ground_support_height(rapier_context, position, probe_base_height);
+
+    if let Some(collision_height) = collision_height {
+        collision_height.max(terrain_height)
+    } else if let Some(reference_height) =
+        reference_height.or_else(|| get_join_reference_height(zone_data, position))
+    {
+        reference_height.max(terrain_height)
+    } else {
+        terrain_height
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn collision_height_only_system(
     mut query_collision_entity: Query<
@@ -144,7 +174,19 @@ pub fn collision_height_only_system(
 
 #[allow(clippy::too_many_arguments)]
 pub fn collision_player_system_join_zoin(
-    mut query_collision_entity: Query<(&mut Position, &mut Transform), Changed<CollisionPlayer>>,
+    mut commands: Commands,
+    mut query_collision_entity: Query<
+        (
+            Entity,
+            &mut Position,
+            &mut Transform,
+            Option<&CollisionPlayerGrounding>,
+        ),
+        (
+            With<CollisionPlayer>,
+            Or<(Changed<CollisionPlayer>, Added<CollisionPlayerGrounding>)>,
+        ),
+    >,
     game_data: Res<GameData>,
     rapier_context: Res<RapierContext>,
     current_zone: Option<Res<CurrentZone>>,
@@ -162,32 +204,38 @@ pub fn collision_player_system_join_zoin(
             return;
         };
 
-    for (mut position, mut transform) in query_collision_entity.iter_mut() {
-        let terrain_height = current_zone_data.get_terrain_height(position.x, position.y) / 100.0;
-        let join_reference_height = game_data
-            .zones
-            .get_zone(current_zone.id)
-            .and_then(|zone_data| get_join_reference_height(zone_data, &position));
-        let join_probe_base_height = join_reference_height
-            .unwrap_or(terrain_height)
-            .max(terrain_height);
+    let zone_data = game_data
+        .zones
+        .get_zone(current_zone.id)
+        .expect("current zone data should be loaded");
 
-        // Prefer supports near the intended join anchor when available, otherwise stay close to
-        // terrain so ceilings and chandeliers do not override the spawn floor.
-        let collision_height =
-            cast_join_ground_support_height(&rapier_context, &position, join_probe_base_height);
+    for (entity, mut position, mut transform, revive_grounding) in query_collision_entity.iter_mut()
+    {
+        let reference_height = if revive_grounding.is_some() {
+            Some(position.z / 100.0)
+        } else {
+            game_data
+                .zones
+                .get_zone(current_zone.id)
+                .and_then(|zone_data| get_join_reference_height(zone_data, &position))
+        };
+        let target_y = resolve_player_ground_height(
+            zone_data,
+            current_zone_data,
+            &rapier_context,
+            &position,
+            reference_height,
+        );
 
         // Update entity translation and position
         transform.translation.x = position.x / 100.0;
         transform.translation.z = -position.y / 100.0;
-        transform.translation.y = if let Some(collision_height) = collision_height {
-            collision_height.max(terrain_height)
-        } else if let Some(join_reference_height) = join_reference_height {
-            join_reference_height.max(terrain_height)
-        } else {
-            terrain_height
-        };
+        transform.translation.y = target_y;
         position.z = transform.translation.y * 100.0;
+
+        if revive_grounding.is_some() {
+            commands.entity(entity).remove::<CollisionPlayerGrounding>();
+        }
     }
 }
 

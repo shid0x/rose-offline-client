@@ -1,4 +1,5 @@
 use bevy::{
+    asset::Handle,
     asset::LoadState,
     ecs::query::QueryEntityError,
     math::{Quat, Vec3, Vec3A},
@@ -7,8 +8,10 @@ use bevy::{
         Transform, With, Without,
     },
     render::{
+        mesh::Mesh,
         mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes},
         primitives::Aabb,
+        view::NoFrustumCulling,
     },
 };
 use bevy_rapier3d::prelude::{Collider, CollisionGroups};
@@ -27,6 +30,7 @@ pub fn npc_model_add_collider_system(
     mut commands: Commands,
     query_models: Query<(Entity, &NpcModel, &SkinnedMesh), Without<ColliderEntity>>,
     query_aabb: Query<Option<&Aabb>, With<SkinnedMesh>>,
+    query_mesh: Query<(), With<Handle<Mesh>>>,
     inverse_bindposes: Res<Assets<SkinnedMeshInverseBindposes>>,
     zmo_assets: Res<Assets<ZmoAsset>>,
     asset_server: Res<AssetServer>,
@@ -106,6 +110,15 @@ pub fn npc_model_add_collider_system(
             .id();
 
         commands.entity(root_bone_entity).add_child(collider_entity);
+
+        // NPC and monster skinned parts can end up with bad bounds after abrupt
+        // respawn teleports; apply this only after collider generation so AABB-based
+        // setup used by character select and model colliders still completes first.
+        for &part_entity in npc_model.model_parts.iter() {
+            if query_mesh.contains(part_entity) {
+                commands.entity(part_entity).insert(NoFrustumCulling);
+            }
+        }
 
         commands.entity(entity).insert((
             ColliderEntity::new(collider_entity),

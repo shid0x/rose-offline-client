@@ -1,4 +1,5 @@
 use bevy::{
+    ecs::world::World,
     math::Vec3,
     prelude::{
         AssetServer, Assets, Changed, Commands, DespawnRecursiveExt, Entity, Query, Res, ResMut,
@@ -41,7 +42,7 @@ pub fn npc_model_update_system(
     for (
         entity,
         npc,
-        transform,
+        _transform,
         mut current_npc_model,
         mut current_skinned_mesh,
         current_dummy_bone_offset,
@@ -102,15 +103,6 @@ pub fn npc_model_update_system(
 
         let mut entity_commands = commands.entity(entity);
 
-        // Update scale
-        if let Some(npc_data) = game_data.npcs.get_npc(npc.id) {
-            entity_commands.insert(transform.with_scale(Vec3::new(
-                npc_data.scale,
-                npc_data.scale,
-                npc_data.scale,
-            )));
-        }
-
         // Update ClientEntityName
         entity_commands.insert(ClientEntityName::new(
             game_data
@@ -137,6 +129,20 @@ pub fn npc_model_update_system(
             *current_dummy_bone_offset = dummy_bone_offset;
         } else {
             entity_commands.insert(dummy_bone_offset);
+        }
+
+        // Update scale without overwriting the whole Transform component.
+        // A deferred `insert(transform.with_scale(...))` would clobber the
+        // translation.y fix that collision_height_only_system applied during
+        // this same frame, since deferred commands flush at the end of the
+        // schedule (after all systems have run).
+        if let Some(npc_data) = game_data.npcs.get_npc(npc.id) {
+            let scale = npc_data.scale;
+            commands.add(move |world: &mut World| {
+                if let Some(mut transform) = world.entity_mut(entity).get_mut::<Transform>() {
+                    transform.scale = Vec3::splat(scale);
+                }
+            });
         }
     }
 }

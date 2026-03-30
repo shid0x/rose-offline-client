@@ -52,6 +52,9 @@ impl ColliderParent {
 pub struct CollisionPlayer;
 
 #[derive(Component)]
+pub struct CollisionPlayerGrounding;
+
+#[derive(Component)]
 pub struct CollisionHeightOnly;
 
 pub const COLLISION_GROUP_ZONE_OBJECT: Group = Group::from_bits_truncate(1 << 0);
