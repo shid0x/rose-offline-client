@@ -47,6 +47,13 @@ rose-game-irose = { path = "../rose-offline-main/rose-game-irose" }
 rose-network-common = { path = "../rose-offline-main/rose-network-common" }
 rose-network-irose = { path = "../rose-offline-main/rose-network-irose" }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
 [dependencies.bevy]
 version = "0.11.3"
 default-features = false

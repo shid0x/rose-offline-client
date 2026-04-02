@@ -1,6 +1,6 @@
 use bevy::{
     ecs::query::WorldQuery,
-    prelude::{Entity, EventReader, EventWriter, Query, Res},
+    prelude::{Entity, EventReader, EventWriter, Query, Res, Transform, Vec3},
 };
 
 use rose_data::{
@@ -11,8 +11,10 @@ use rose_game_common::components::{Equipment, MoveMode, Npc};
 
 use crate::{
     animation::AnimationFrameEvent,
-    components::{Command, PlayerCharacter, ProjectileTarget},
-    events::{HitEvent, SpawnEffectData, SpawnEffectEvent, SpawnProjectileEvent},
+    components::{Command, CommandCastSkillTarget, PlayerCharacter, Position, ProjectileTarget},
+    events::{
+        HitEvent, SkillHitSoundEvent, SpawnEffectData, SpawnEffectEvent, SpawnProjectileEvent,
+    },
     resources::GameData,
 };
 
@@ -31,7 +33,9 @@ pub fn animation_effect_system(
     mut spawn_effect_events: EventWriter<SpawnEffectEvent>,
     mut spawn_projectile_events: EventWriter<SpawnProjectileEvent>,
     mut hit_events: EventWriter<HitEvent>,
+    mut skill_hit_sound_events: EventWriter<SkillHitSoundEvent>,
     query_event_entity: Query<EventEntity>,
+    query_position: Query<&Position>,
     game_data: Res<GameData>,
 ) {
     for event in animation_frame_events.iter() {
@@ -281,6 +285,41 @@ pub fn animation_effect_system(
                             }
                         }
                     }
+                    SkillType::AreaTarget => {
+                        if let Some(effect_file_id) = skill_data
+                            .bullet_effect_id
+                            .and_then(|id| game_data.effect_database.get_effect(id))
+                            .and_then(|effect_data| effect_data.bullet_effect)
+                        {
+                            if let Some(impact_position) =
+                                get_skill_impact_position(event_entity.command, &query_position)
+                            {
+                                spawn_effect_events.send(SpawnEffectEvent::WithTransform(
+                                    rose_world_transform(impact_position),
+                                    SpawnEffectData::with_file_id(effect_file_id),
+                                ));
+                            }
+                        }
+
+                        if event
+                            .flags
+                            .contains(AnimationEventFlags::APPLY_PENDING_SKILL_EFFECT)
+                            && !event.flags.contains(AnimationEventFlags::EFFECT_SKILL_HIT)
+                        {
+                            if let Some(target_entity) = target_entity {
+                                hit_events.send(HitEvent::with_skill_damage(
+                                    event.entity,
+                                    target_entity,
+                                    skill_data.id,
+                                ));
+                                skill_hit_sound_events.send(SkillHitSoundEvent::new(
+                                    event.entity,
+                                    target_entity,
+                                    skill_data.id,
+                                ));
+                            }
+                        }
+                    }
                     SkillType::TargetBound
                     | SkillType::TargetBoundDuration
                     | SkillType::TargetStateDuration
@@ -504,4 +543,27 @@ fn show_casting_effect(
             SpawnEffectData::with_file_id(casting_effect.effect_file_id),
         ));
     }
+}
+
+fn get_skill_impact_position(command: &Command, query_position: &Query<&Position>) -> Option<Vec3> {
+    let Command::CastSkill(cast_skill) = command else {
+        return None;
+    };
+
+    cast_skill
+        .impact_position
+        .or_else(|| match cast_skill.skill_target {
+            Some(CommandCastSkillTarget::Entity(target_entity)) => query_position
+                .get(target_entity)
+                .ok()
+                .map(|position| position.position),
+            Some(CommandCastSkillTarget::Position(target_position)) => {
+                Some(Vec3::new(target_position.x, target_position.y, 0.0))
+            }
+            None => None,
+        })
+}
+
+fn rose_world_transform(position: Vec3) -> Transform {
+    Transform::from_xyz(position.x / 100.0, position.z / 100.0, -position.y / 100.0)
 }

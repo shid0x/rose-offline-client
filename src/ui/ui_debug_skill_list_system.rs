@@ -250,6 +250,7 @@ pub fn ui_debug_skill_list_system(
                                                         None,
                                                         None,
                                                         None,
+                                                        None,
                                                     ));
                                                 }
                                             }
@@ -295,6 +296,7 @@ pub fn ui_debug_skill_list_system(
                                                         .insert(Command::CastSkill(CommandCastSkill {
                                                             skill_id: skill_data.id,
                                                             skill_target: None,
+                                                            impact_position: None,
                                                             action_motion_id: skill_data.action_motion_id,
                                                             cast_motion_id: skill_data.casting_motion_id,
                                                             cast_repeat_motion_id: skill_data.casting_repeat_motion_id,
@@ -352,6 +354,7 @@ pub fn ui_debug_skill_list_system(
                                                         .insert(Command::CastSkill(CommandCastSkill {
                                                             skill_id: skill_data.id,
                                                             skill_target: None,
+                                                            impact_position: None,
                                                             action_motion_id: skill_data.action_motion_id,
                                                             cast_motion_id: skill_data.casting_motion_id,
                                                             cast_repeat_motion_id: skill_data.casting_repeat_motion_id,

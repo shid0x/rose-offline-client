@@ -99,6 +99,20 @@ fn apply_status_effect_updates(
     (updated_hp, updated_mp)
 }
 
+fn get_status_effect_attack_speed_adjust(status_effects: &StatusEffects) -> i32 {
+    status_effects
+        .get_status_effect_value(StatusEffectType::IncreaseAttackSpeed)
+        .unwrap_or(0)
+        - status_effects
+            .get_status_effect_value(StatusEffectType::DecreaseAttackSpeed)
+            .unwrap_or(0)
+}
+
+fn sync_passive_attack_speed(ability_values: &mut AbilityValues, passive_attack_speed: i32) {
+    ability_values.attack_speed += passive_attack_speed - ability_values.passive_attack_speed;
+    ability_values.passive_attack_speed = passive_attack_speed;
+}
+
 fn clear_missing_status_effect_regen(
     status_effects_regen: &mut StatusEffectsRegen,
     update_status_effects: &ActiveStatusEffects,
@@ -106,6 +120,24 @@ fn clear_missing_status_effect_regen(
     for (status_effect_type, active) in update_status_effects.iter() {
         if active.is_none() {
             status_effects_regen.regens[status_effect_type] = None;
+        }
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn clear_skill_use_disabled_commands(
+    command: Option<&mut Command>,
+    next_command: Option<&mut NextCommand>,
+) {
+    if let Some(command) = command {
+        if matches!(&*command, Command::CastSkill(_)) {
+            *command = Command::with_stop();
+        }
+    }
+
+    if let Some(next_command) = next_command {
+        if matches!(next_command.as_ref(), Some(Command::CastSkill(_))) {
+            *next_command = NextCommand::default();
         }
     }
 }
@@ -228,6 +260,23 @@ fn update_inventory_and_money(
             }
         }
     }
+}
+
+fn find_equip_sound_from_inventory_update<F>(
+    update_items: &[(ItemSlot, Option<Item>)],
+    mut resolve_equip_sound_id: F,
+) -> Option<SoundId>
+where
+    F: FnMut(ItemReference) -> Option<SoundId>,
+{
+    update_items
+        .iter()
+        .find_map(|(item_slot, item)| match item_slot {
+            ItemSlot::Ammo(_) | ItemSlot::Equipment(_) | ItemSlot::Vehicle(_) => item
+                .as_ref()
+                .and_then(|item| resolve_equip_sound_id(item.get_item_reference())),
+            _ => None,
+        })
 }
 
 fn clear_visible_character_clan_membership_by_name(world: &mut World, name: &str) {
@@ -514,8 +563,7 @@ pub fn game_connection_system(
                     &status_effects,
                 );
                 ability_values.run_speed = message.move_speed.speed;
-                ability_values.attack_speed += message.passive_attack_speed;
-                ability_values.passive_attack_speed = message.passive_attack_speed;
+                sync_passive_attack_speed(&mut ability_values, message.passive_attack_speed);
 
                 let entity = commands
                     .spawn(((
@@ -1127,21 +1175,13 @@ pub fn game_connection_system(
             Ok(ServerMessage::UpdateInventory { items, money }) => {
                 if let Some(player_entity) = client_entity_list.player_entity {
                     commands.add(move |world: &mut World| {
-                        // Play equip sound for any vehicle part that was equipped
                         let equip_sound_id = {
                             let game_data = world.resource::<GameData>();
-                            items.iter().find_map(|(slot, item)| {
-                                if let ItemSlot::Vehicle(_) = slot {
-                                    item.as_ref()
-                                        .and_then(|i| {
-                                            game_data
-                                                .items
-                                                .get_base_item(i.get_item_reference())
-                                        })
-                                        .and_then(|data| data.equip_sound_id)
-                                } else {
-                                    None
-                                }
+                            find_equip_sound_from_inventory_update(&items, |item_reference| {
+                                game_data
+                                    .items
+                                    .get_base_item(item_reference)
+                                    .and_then(|data| data.equip_sound_id)
                             })
                         };
 
@@ -1342,12 +1382,16 @@ pub fn game_connection_system(
                     });
                 }
             }
-            Ok(ServerMessage::UpdateSpeed { entity_id, run_speed, passive_attack_speed: _ }) => {
-                // TODO: Use passive_attack_speed ?
+            Ok(ServerMessage::UpdateSpeed { entity_id, run_speed, passive_attack_speed }) => {
                 if let Some(entity) = client_entity_list.get(entity_id) {
-                    commands
-                        .entity(entity)
-                        .insert(MoveSpeed::new(run_speed as f32));
+                    commands.add(move |world: &mut World| {
+                        let mut entity_mut = world.entity_mut(entity);
+                        entity_mut.insert(MoveSpeed::new(run_speed as f32));
+
+                        if let Some(mut ability_values) = entity_mut.get_mut::<AbilityValues>() {
+                            sync_passive_attack_speed(&mut ability_values, passive_attack_speed);
+                        }
+                    });
                 }
             }
             Ok(ServerMessage::UpdateSummonPoints {
@@ -1374,6 +1418,7 @@ pub fn game_connection_system(
                         let mut entity_mut = world.entity_mut(entity);
                         let mut updated_hp = None;
                         let mut updated_mp = None;
+                        let mut attack_speed_adjust = None;
 
                         if let Some(mut status_effects) = entity_mut.get_mut::<StatusEffects>() {
                             (updated_hp, updated_mp) = apply_status_effect_updates(
@@ -1381,6 +1426,8 @@ pub fn game_connection_system(
                                 &update_status_effects,
                                 &updated_values,
                             );
+                            attack_speed_adjust =
+                                Some(get_status_effect_attack_speed_adjust(&status_effects));
                         }
 
                         if let Some(mut status_effects_regen) = entity_mut.get_mut::<StatusEffectsRegen>() {
@@ -1399,6 +1446,38 @@ pub fn game_connection_system(
                         if let Some(updated_mp) = updated_mp {
                             if let Some(mut mana_points) = entity_mut.get_mut::<ManaPoints>() {
                                 mana_points.mp = updated_mp;
+                            }
+                        }
+
+                        if let Some(attack_speed_adjust) = attack_speed_adjust {
+                            if let Some(mut ability_values) = entity_mut.get_mut::<AbilityValues>() {
+                                ability_values.adjust.attack_speed = attack_speed_adjust;
+                            }
+                        }
+
+                        if entity_mut
+                            .get::<StatusEffects>()
+                            .is_some_and(|status_effects| status_effects.is_skill_use_disabled())
+                        {
+                            let clear_command = entity_mut
+                                .get::<Command>()
+                                .is_some_and(|command| matches!(command, Command::CastSkill(_)));
+                            let clear_next_command =
+                                entity_mut.get::<NextCommand>().is_some_and(|next_command| {
+                                    matches!(next_command.as_ref(), Some(Command::CastSkill(_)))
+                                });
+
+                            if clear_command {
+                                if let Some(mut command) = entity_mut.get_mut::<Command>() {
+                                    *command = Command::with_stop();
+                                }
+                            }
+
+                            if clear_next_command {
+                                if let Some(mut next_command) = entity_mut.get_mut::<NextCommand>()
+                                {
+                                    *next_command = NextCommand::default();
+                                }
                             }
                         }
                     });
@@ -1722,6 +1801,7 @@ pub fn game_connection_system(
                     commands.entity(entity).insert(NextCommand::with_cast_skill(
                         skill_id,
                         None,
+                        None,
                         cast_motion_id,
                         None,
                         None,
@@ -1764,12 +1844,13 @@ pub fn game_connection_system(
                     }
                 }
             }
-            Ok(ServerMessage::CastSkillTargetEntity { entity_id, skill_id, target_entity_id, target_distance: _, target_position: _, cast_motion_id }) => {
+            Ok(ServerMessage::CastSkillTargetEntity { entity_id, skill_id, target_entity_id, target_distance: _, target_position, cast_motion_id }) => {
                 if let Some(entity) = client_entity_list.get(entity_id) {
                     if let Some(target_entity) = client_entity_list.get(target_entity_id) {
                         commands.entity(entity).insert(NextCommand::with_cast_skill(
                             skill_id,
                             Some(CommandCastSkillTarget::Entity(target_entity)),
+                            Some(Vec3::new(target_position.x, target_position.y, 0.0)),
                             cast_motion_id,
                             None,
                             None,
@@ -1818,6 +1899,7 @@ pub fn game_connection_system(
                     commands.entity(entity).insert(NextCommand::with_cast_skill(
                         skill_id,
                         Some(CommandCastSkillTarget::Position(target_position)),
+                        Some(Vec3::new(target_position.x, target_position.y, 0.0)),
                         cast_motion_id,
                         None,
                         None,
@@ -3008,20 +3090,100 @@ pub fn game_connection_system(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_status_effect_updates, clear_missing_status_effect_regen, party_level_up_event,
-        reward_money_diff, sync_reward_money,
+        apply_status_effect_updates, clear_missing_status_effect_regen,
+        clear_skill_use_disabled_commands, find_equip_sound_from_inventory_update,
+        get_status_effect_attack_speed_adjust, party_level_up_event, reward_money_diff,
+        sync_passive_attack_speed, sync_reward_money,
     };
+    use crate::components::{Command, NextCommand};
     use crate::events::ClientEntityEvent;
     use bevy::prelude::Entity;
-    use rose_data::{StatusEffectId, StatusEffectType};
+    use rose_data::{
+        AmmoIndex, EquipmentIndex, EquipmentItem, Item, ItemReference, SoundId, StackableItem,
+        StatusEffectId, StatusEffectType, VehiclePartIndex,
+    };
     use rose_game_common::{
         components::{
-            ActiveStatusEffect, ActiveStatusEffectRegen, Inventory, Money, StatusEffects,
+            AbilityValues, AbilityValuesAdjust, ActiveStatusEffect, ActiveStatusEffectRegen,
+            DamageCategory, DamageType, Inventory, ItemSlot, Money, StatusEffects,
             StatusEffectsRegen,
         },
         messages::server::ActiveStatusEffects,
     };
     use std::time::Duration;
+
+    fn test_sound_id(value: u16) -> SoundId {
+        SoundId::new(value).unwrap()
+    }
+
+    fn test_resolve_equip_sound(item_reference: ItemReference) -> Option<SoundId> {
+        match item_reference {
+            ItemReference { item_number: 1, .. } => Some(test_sound_id(101)),
+            ItemReference { item_number: 2, .. } => Some(test_sound_id(102)),
+            ItemReference { item_number: 3, .. } => Some(test_sound_id(103)),
+            _ => None,
+        }
+    }
+
+    fn test_ability_values() -> AbilityValues {
+        AbilityValues {
+            is_driving: false,
+            damage_category: DamageCategory::Character,
+            level: 1,
+            walk_speed: 200.0,
+            run_speed: 400.0,
+            vehicle_move_speed: 0.0,
+            strength: 0,
+            dexterity: 0,
+            intelligence: 0,
+            concentration: 0,
+            charm: 0,
+            sense: 0,
+            max_health: 100,
+            max_mana: 50,
+            additional_health_recovery: 0,
+            additional_mana_recovery: 0,
+            attack_damage_type: DamageType::Physical,
+            attack_power: 10,
+            attack_speed: 120,
+            passive_attack_speed: 15,
+            attack_range: 150,
+            hit: 1,
+            defence: 1,
+            resistance: 1,
+            critical: 1,
+            avoid: 1,
+            vehicle_attack_power: 0,
+            vehicle_attack_range: 0,
+            vehicle_attack_speed: 0,
+            vehicle_hit: 0,
+            vehicle_defence: 0,
+            vehicle_critical: 0,
+            vehicle_avoid: 0,
+            max_damage_sources: 4,
+            drop_rate: 0,
+            max_weight: 0,
+            summon_owner_level: None,
+            summon_skill_level: None,
+            adjust: AbilityValuesAdjust {
+                additional_damage_multiplier: 0.0,
+                attack_speed: 0,
+                attack_power: 0,
+                avoid: 0,
+                critical: 0,
+                defence: 0,
+                hit: 0,
+                resistance: 0,
+                max_health: 0,
+                max_mana: 0,
+                run_speed: 0.0,
+            },
+            npc_store_buy_rate: 0,
+            npc_store_sell_rate: 0,
+            save_mana: 0,
+            passive_max_summons: 0,
+        }
+    }
 
     #[test]
     fn party_level_xp_level_up_emits_party_level_up_event() {
@@ -3066,6 +3228,110 @@ mod tests {
     fn reward_money_diff_uses_absolute_totals() {
         assert_eq!(reward_money_diff(Money(10_000), Money(8_000)), -2_000);
         assert_eq!(reward_money_diff(Money(10_000), Money(12_000)), 2_000);
+    }
+
+    #[test]
+    fn inventory_update_equipment_equip_returns_sound() {
+        let update_items = vec![(
+            ItemSlot::Equipment(EquipmentIndex::Weapon),
+            Some(Item::new(
+                EquipmentItem::new(ItemReference::weapon(1), 40).unwrap(),
+            )),
+        )];
+
+        assert_eq!(
+            find_equip_sound_from_inventory_update(&update_items, test_resolve_equip_sound),
+            Some(test_sound_id(101))
+        );
+    }
+
+    #[test]
+    fn inventory_update_ammo_equip_returns_sound() {
+        let update_items = vec![(
+            ItemSlot::Ammo(AmmoIndex::Bullet),
+            Some(Item::new(
+                StackableItem::new(ItemReference::material(2), 50).unwrap(),
+            )),
+        )];
+
+        assert_eq!(
+            find_equip_sound_from_inventory_update(&update_items, test_resolve_equip_sound),
+            Some(test_sound_id(102))
+        );
+    }
+
+    #[test]
+    fn inventory_update_vehicle_equip_returns_sound() {
+        let update_items = vec![(
+            ItemSlot::Vehicle(VehiclePartIndex::Body),
+            Some(Item::new(
+                EquipmentItem::new(ItemReference::vehicle(3), 40).unwrap(),
+            )),
+        )];
+
+        assert_eq!(
+            find_equip_sound_from_inventory_update(&update_items, test_resolve_equip_sound),
+            Some(test_sound_id(103))
+        );
+    }
+
+    #[test]
+    fn inventory_update_unequip_returns_no_sound() {
+        let update_items = vec![
+            (ItemSlot::Equipment(EquipmentIndex::Weapon), None),
+            (ItemSlot::Ammo(AmmoIndex::Bullet), None),
+            (ItemSlot::Vehicle(VehiclePartIndex::Body), None),
+        ];
+
+        assert_eq!(
+            find_equip_sound_from_inventory_update(&update_items, test_resolve_equip_sound),
+            None
+        );
+    }
+
+    #[test]
+    fn inventory_only_updates_return_no_sound() {
+        let update_items = vec![(
+            ItemSlot::Inventory(
+                rose_game_common::components::InventoryPageType::Equipment,
+                0,
+            ),
+            Some(Item::new(
+                EquipmentItem::new(ItemReference::weapon(1), 40).unwrap(),
+            )),
+        )];
+
+        assert_eq!(
+            find_equip_sound_from_inventory_update(&update_items, test_resolve_equip_sound),
+            None
+        );
+    }
+
+    #[test]
+    fn mixed_swap_updates_choose_newly_equipped_item_sound() {
+        let update_items = vec![
+            (ItemSlot::Equipment(EquipmentIndex::SubWeapon), None),
+            (
+                ItemSlot::Inventory(
+                    rose_game_common::components::InventoryPageType::Equipment,
+                    1,
+                ),
+                Some(Item::new(
+                    EquipmentItem::new(ItemReference::sub_weapon(99), 40).unwrap(),
+                )),
+            ),
+            (
+                ItemSlot::Equipment(EquipmentIndex::Weapon),
+                Some(Item::new(
+                    EquipmentItem::new(ItemReference::weapon(1), 40).unwrap(),
+                )),
+            ),
+        ];
+
+        assert_eq!(
+            find_equip_sound_from_inventory_update(&update_items, test_resolve_equip_sound),
+            Some(test_sound_id(101))
+        );
     }
 
     #[test]
@@ -3117,5 +3383,68 @@ mod tests {
         assert!(status_effects.active[StatusEffectType::Poisoned].is_none());
         assert!(status_effects.expire_times[StatusEffectType::Poisoned].is_none());
         assert!(status_effects_regen.regens[StatusEffectType::Poisoned].is_none());
+    }
+
+    #[test]
+    fn status_effect_attack_speed_adjust_uses_increase_and_decrease_effects() {
+        let mut status_effects = StatusEffects::default();
+        status_effects.active[StatusEffectType::IncreaseAttackSpeed] = Some(ActiveStatusEffect {
+            id: StatusEffectId::new(16).unwrap(),
+            value: 12,
+        });
+        status_effects.active[StatusEffectType::DecreaseAttackSpeed] = Some(ActiveStatusEffect {
+            id: StatusEffectId::new(17).unwrap(),
+            value: 30,
+        });
+
+        assert_eq!(get_status_effect_attack_speed_adjust(&status_effects), -18);
+    }
+
+    #[test]
+    fn clear_skill_use_disabled_commands_clears_cast_only() {
+        let mut command = Command::with_cast_skill(
+            rose_data::SkillId::new(1).unwrap(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            crate::components::CommandCastSkillState::Starting,
+            false,
+        );
+        let mut next_command = NextCommand::with_cast_skill(
+            rose_data::SkillId::new(2).unwrap(),
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        clear_skill_use_disabled_commands(Some(&mut command), Some(&mut next_command));
+
+        assert!(matches!(command, Command::Stop));
+        assert!(next_command.is_none());
+    }
+
+    #[test]
+    fn clear_skill_use_disabled_commands_leaves_non_skill_commands_intact() {
+        let mut command = Command::with_move(Default::default(), None, None);
+        let mut next_command = NextCommand::with_attack(Entity::from_raw(5));
+
+        clear_skill_use_disabled_commands(Some(&mut command), Some(&mut next_command));
+
+        assert!(matches!(command, Command::Move(_)));
+        assert!(matches!(next_command.as_ref(), Some(Command::Attack(_))));
+    }
+
+    #[test]
+    fn sync_passive_attack_speed_updates_total_attack_speed_by_delta() {
+        let mut ability_values = test_ability_values();
+
+        sync_passive_attack_speed(&mut ability_values, 5);
+
+        assert_eq!(ability_values.attack_speed, 110);
+        assert_eq!(ability_values.passive_attack_speed, 5);
     }
 }

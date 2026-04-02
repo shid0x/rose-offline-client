@@ -51,6 +51,7 @@ pub enum CommandCastSkillState {
 pub struct CommandCastSkill {
     pub skill_id: SkillId,
     pub skill_target: Option<CommandCastSkillTarget>,
+    pub impact_position: Option<Vec3>,
     pub action_motion_id: Option<MotionId>,
     pub cast_motion_id: Option<MotionId>,
     pub cast_repeat_motion_id: Option<MotionId>,
@@ -87,6 +88,7 @@ impl Command {
     pub fn with_cast_skill(
         skill_id: SkillId,
         skill_target: Option<CommandCastSkillTarget>,
+        impact_position: Option<Vec3>,
         cast_motion_id: Option<MotionId>,
         cast_repeat_motion_id: Option<MotionId>,
         action_motion_id: Option<MotionId>,
@@ -96,6 +98,7 @@ impl Command {
         Self::CastSkill(CommandCastSkill {
             skill_id,
             skill_target,
+            impact_position,
             cast_motion_id,
             cast_repeat_motion_id,
             action_motion_id,
@@ -232,6 +235,7 @@ impl NextCommand {
     pub fn with_cast_skill(
         skill_id: SkillId,
         skill_target: Option<CommandCastSkillTarget>,
+        impact_position: Option<Vec3>,
         cast_motion_id: Option<MotionId>,
         cast_repeat_motion_id: Option<MotionId>,
         action_motion_id: Option<MotionId>,
@@ -239,6 +243,7 @@ impl NextCommand {
         Self(Some(Command::CastSkill(CommandCastSkill {
             skill_id,
             skill_target,
+            impact_position,
             cast_motion_id,
             cast_repeat_motion_id,
             action_motion_id,

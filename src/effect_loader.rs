@@ -16,8 +16,8 @@ use bevy::{
         view::NoFrustumCulling,
     },
 };
-use rose_file_readers::{EftFile, EftMesh, EftParticle, PtlFile, VfsPath, VirtualFilesystem};
 use rose_file_readers::VfsPathBuf;
+use rose_file_readers::{EftFile, EftMesh, EftParticle, PtlFile, VfsPath, VirtualFilesystem};
 
 use crate::{
     animation::MeshAnimation,

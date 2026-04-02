@@ -8,8 +8,8 @@ use bevy::{
         Transform, With, Without,
     },
     render::{
-        mesh::Mesh,
         mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes},
+        mesh::Mesh,
         primitives::Aabb,
         view::NoFrustumCulling,
     },

@@ -307,6 +307,23 @@ fn get_vehicle_move_animation_speed(move_speed: &MoveSpeed) -> f32 {
     (move_speed.speed + 500.0) / 1000.0
 }
 
+fn get_combat_chase_move_state(
+    is_npc: bool,
+    ability_values: &AbilityValues,
+    move_mode: &MoveMode,
+    move_speed: &MoveSpeed,
+) -> (MoveMode, MoveSpeed) {
+    if is_npc {
+        let move_mode = MoveMode::Run;
+        (
+            move_mode,
+            MoveSpeed::new(ability_values.get_move_speed(&move_mode)),
+        )
+    } else {
+        (*move_mode, *move_speed)
+    }
+}
+
 #[derive(WorldQuery)]
 pub struct QueryAttackTarget<'w> {
     entity: Entity,
@@ -860,8 +877,21 @@ pub fn command_system(
                     }
                 } else {
                     // Not in range, move towards target
-                    let motion = get_move_animation(move_mode, character_model, npc_model, vehicle);
+                    let (chase_move_mode, chase_move_speed) = get_combat_chase_move_state(
+                        npc_model.is_some(),
+                        ability_values,
+                        move_mode,
+                        move_speed,
+                    );
+                    let motion =
+                        get_move_animation(&chase_move_mode, character_model, npc_model, vehicle);
                     if let Some(motion) = motion {
+                        if npc_model.is_some() {
+                            commands
+                                .entity(entity)
+                                .insert((chase_move_mode, chase_move_speed));
+                        }
+
                         *command = Command::with_move(
                             target.position.position,
                             Some(target_entity),
@@ -872,7 +902,7 @@ pub fn command_system(
                             &mut commands.entity(active_motion_entity),
                             &mut active_motion,
                             motion,
-                            get_move_animation_speed(move_speed),
+                            get_move_animation_speed(&chase_move_speed),
                             true,
                         );
 
@@ -883,7 +913,7 @@ pub fn command_system(
                                 &mut commands.entity(vehicle_active_motion_entity),
                                 &mut vehicle_active_motion,
                                 motion,
-                                get_vehicle_move_animation_speed(move_speed),
+                                get_vehicle_move_animation_speed(&chase_move_speed),
                                 true,
                             )
                         }
@@ -990,6 +1020,7 @@ pub fn command_system(
             &mut Command::CastSkill(CommandCastSkill {
                 skill_id,
                 skill_target,
+                impact_position,
                 cast_motion_id,
                 action_motion_id,
                 ready_action,
@@ -1013,6 +1044,19 @@ pub fn command_system(
                             None,
                         ),
                         None => (None, None),
+                    };
+                    let impact_position = match (impact_position, target_position) {
+                        (Some(impact_position), Some(target_position)) => Some(Vec3::new(
+                            impact_position.x,
+                            impact_position.y,
+                            if impact_position.z != 0.0 {
+                                impact_position.z
+                            } else {
+                                target_position.z
+                            },
+                        )),
+                        (Some(impact_position), None) => Some(impact_position),
+                        (None, target_position) => target_position,
                     };
 
                     let cast_range = if skill_data.cast_range > 0 {
@@ -1086,6 +1130,7 @@ pub fn command_system(
                         *command = Command::with_cast_skill(
                             skill_id,
                             skill_target,
+                            impact_position,
                             cast_motion_id.or(skill_data.casting_motion_id),
                             skill_data.casting_repeat_motion_id,
                             action_motion_id.or(skill_data.action_motion_id),
@@ -1096,9 +1141,25 @@ pub fn command_system(
                         let target_position = target_position.unwrap();
 
                         // Not in range, move towards target
-                        let motion =
-                            get_move_animation(move_mode, character_model, npc_model, vehicle);
+                        let (chase_move_mode, chase_move_speed) = get_combat_chase_move_state(
+                            npc_model.is_some(),
+                            ability_values,
+                            move_mode,
+                            move_speed,
+                        );
+                        let motion = get_move_animation(
+                            &chase_move_mode,
+                            character_model,
+                            npc_model,
+                            vehicle,
+                        );
                         if let Some(motion) = motion {
+                            if npc_model.is_some() {
+                                commands
+                                    .entity(entity)
+                                    .insert((chase_move_mode, chase_move_speed));
+                            }
+
                             *command = Command::with_move(
                                 target_position,
                                 target_entity,
@@ -1109,7 +1170,7 @@ pub fn command_system(
                                 &mut commands.entity(active_motion_entity),
                                 &mut active_motion,
                                 motion,
-                                get_move_animation_speed(move_speed),
+                                get_move_animation_speed(&chase_move_speed),
                                 false,
                             );
                         } else {
@@ -1122,5 +1183,115 @@ pub fn command_system(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_combat_chase_move_state;
+    use rose_game_common::components::{
+        AbilityValues, AbilityValuesAdjust, DamageCategory, DamageType, MoveMode, MoveSpeed,
+    };
+
+    fn test_ability_values() -> AbilityValues {
+        AbilityValues {
+            is_driving: false,
+            damage_category: DamageCategory::Character,
+            level: 1,
+            walk_speed: 200.0,
+            run_speed: 400.0,
+            vehicle_move_speed: 0.0,
+            strength: 0,
+            dexterity: 0,
+            intelligence: 0,
+            concentration: 0,
+            charm: 0,
+            sense: 0,
+            max_health: 100,
+            max_mana: 50,
+            additional_health_recovery: 0,
+            additional_mana_recovery: 0,
+            attack_damage_type: DamageType::Physical,
+            attack_power: 10,
+            attack_speed: 120,
+            passive_attack_speed: 15,
+            attack_range: 150,
+            hit: 1,
+            defence: 1,
+            resistance: 1,
+            critical: 1,
+            avoid: 1,
+            vehicle_attack_power: 0,
+            vehicle_attack_range: 0,
+            vehicle_attack_speed: 0,
+            vehicle_hit: 0,
+            vehicle_defence: 0,
+            vehicle_critical: 0,
+            vehicle_avoid: 0,
+            max_damage_sources: 4,
+            drop_rate: 0,
+            max_weight: 0,
+            summon_owner_level: None,
+            summon_skill_level: None,
+            adjust: AbilityValuesAdjust {
+                additional_damage_multiplier: 0.0,
+                attack_speed: 0,
+                attack_power: 0,
+                avoid: 0,
+                critical: 0,
+                defence: 0,
+                hit: 0,
+                resistance: 0,
+                max_health: 0,
+                max_mana: 0,
+                run_speed: 0.0,
+            },
+            npc_store_buy_rate: 0,
+            npc_store_sell_rate: 0,
+            save_mana: 0,
+            passive_max_summons: 0,
+        }
+    }
+
+    #[test]
+    fn npc_attack_chase_switches_from_walk_to_run_speed() {
+        let ability_values = test_ability_values();
+        let (move_mode, move_speed) = get_combat_chase_move_state(
+            true,
+            &ability_values,
+            &MoveMode::Walk,
+            &MoveSpeed::new(ability_values.walk_speed),
+        );
+
+        assert_eq!(move_mode, MoveMode::Run);
+        assert_eq!(move_speed.speed, ability_values.run_speed);
+    }
+
+    #[test]
+    fn npc_cast_skill_chase_switches_from_walk_to_run_speed() {
+        let ability_values = test_ability_values();
+        let (move_mode, move_speed) = get_combat_chase_move_state(
+            true,
+            &ability_values,
+            &MoveMode::Walk,
+            &MoveSpeed::new(ability_values.walk_speed),
+        );
+
+        assert_eq!(move_mode, MoveMode::Run);
+        assert_eq!(move_speed.speed, ability_values.run_speed);
+    }
+
+    #[test]
+    fn non_npc_chase_preserves_existing_move_state() {
+        let ability_values = test_ability_values();
+        let (move_mode, move_speed) = get_combat_chase_move_state(
+            false,
+            &ability_values,
+            &MoveMode::Walk,
+            &MoveSpeed::new(ability_values.walk_speed),
+        );
+
+        assert_eq!(move_mode, MoveMode::Walk);
+        assert_eq!(move_speed.speed, ability_values.walk_speed);
     }
 }
