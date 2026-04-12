@@ -7,7 +7,7 @@ use bevy::{
         system::{lifetimeless::SRes, SystemParamItem},
     },
     math::{Vec3, Vec4},
-    pbr::CascadeShadowConfig,
+    pbr::{CascadeShadowConfig, DirectionalLightShadowMap},
     prelude::{
         AmbientLight, App, Color, Commands, DirectionalLight, DirectionalLightBundle, EulerRot,
         FromWorld, HandleUntyped, IntoSystemConfigs, Plugin, Quat, ReflectResource, Res, ResMut,
@@ -92,6 +92,8 @@ fn spawn_lights(mut commands: Commands) {
         color: Color::rgb(1.0, 1.0, 1.0),
         brightness: 0.9,
     });
+
+    commands.insert_resource(DirectionalLightShadowMap { size: 4096 });
 }
 
 #[derive(Resource, Reflect)]

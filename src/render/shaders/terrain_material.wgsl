@@ -47,6 +47,27 @@ struct FragmentInput {
     @location(4) tile_info: u32,
 };
 
+fn sample_soft_shadow(world_position: vec4<f32>, world_normal: vec3<f32>, view_z: f32) -> f32 {
+    let texel_offset = 0.025;
+    // Per-pixel rotation angle to break up banding artifacts
+    let angle = fract(sin(dot(world_position.xz, vec2<f32>(12.9898, 78.233))) * 43758.5453) * 6.2832;
+    let ca = cos(angle);
+    let sa = sin(angle);
+
+    var shadow = fetch_directional_shadow(0u, world_position, world_normal, view_z);
+
+    // 4 rotated offset samples on XZ plane
+    let d1 = vec2<f32>(ca, sa) * texel_offset;
+    let d2 = vec2<f32>(-sa, ca) * texel_offset;
+
+    shadow += fetch_directional_shadow(0u, world_position + vec4<f32>(d1.x, 0.0, d1.y, 0.0), world_normal, view_z);
+    shadow += fetch_directional_shadow(0u, world_position + vec4<f32>(-d1.x, 0.0, -d1.y, 0.0), world_normal, view_z);
+    shadow += fetch_directional_shadow(0u, world_position + vec4<f32>(d2.x, 0.0, d2.y, 0.0), world_normal, view_z);
+    shadow += fetch_directional_shadow(0u, world_position + vec4<f32>(-d2.x, 0.0, -d2.y, 0.0), world_normal, view_z);
+
+    return shadow / 5.0;
+}
+
 @fragment
 fn fragment(in: FragmentInput) -> @location(0) vec4<f32> {
     let view_z = dot(vec4<f32>(
@@ -80,8 +101,8 @@ fn fragment(in: FragmentInput) -> @location(0) vec4<f32> {
     let layer1 = textureSample(tile_array_texture[tile_layer1_id], tile_array_sampler, in.uv1);
     let layer2 = textureSample(tile_array_texture[tile_layer2_id], tile_array_sampler, layer2_uv);
     var lightmap = textureSample(tile_array_texture[0], tile_array_sampler, in.uv0);
-    let shadow = fetch_directional_shadow(0u, in.world_position, in.world_normal, view_z);
-    lightmap = vec4<f32>(lightmap.xyz * (shadow * 0.2 + 0.8), lightmap.w);
+    let shadow = sample_soft_shadow(in.world_position, in.world_normal, view_z);
+    lightmap = vec4<f32>(lightmap.xyz * (shadow * 0.5 + 0.5), lightmap.w);
 
     let terrain_color = mix(layer1, layer2, layer2.a) * lightmap * 2.0;
 

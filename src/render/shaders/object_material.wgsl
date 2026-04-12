@@ -147,6 +147,27 @@ fn fragment(in: FragmentInput) {
 
 #else // ifdef DEPTH_PREPASS
 
+fn sample_soft_shadow(world_position: vec4<f32>, world_normal: vec3<f32>, view_z: f32) -> f32 {
+    let texel_offset = 0.025;
+    // Per-pixel rotation angle to break up banding artifacts
+    let angle = fract(sin(dot(world_position.xz, vec2<f32>(12.9898, 78.233))) * 43758.5453) * 6.2832;
+    let ca = cos(angle);
+    let sa = sin(angle);
+
+    var shadow = fetch_directional_shadow(0u, world_position, world_normal, view_z);
+
+    // 4 rotated offset samples on XZ plane
+    let d1 = vec2<f32>(ca, sa) * texel_offset;
+    let d2 = vec2<f32>(-sa, ca) * texel_offset;
+
+    shadow += fetch_directional_shadow(0u, world_position + vec4<f32>(d1.x, 0.0, d1.y, 0.0), world_normal, view_z);
+    shadow += fetch_directional_shadow(0u, world_position + vec4<f32>(-d1.x, 0.0, -d1.y, 0.0), world_normal, view_z);
+    shadow += fetch_directional_shadow(0u, world_position + vec4<f32>(d2.x, 0.0, d2.y, 0.0), world_normal, view_z);
+    shadow += fetch_directional_shadow(0u, world_position + vec4<f32>(-d2.x, 0.0, -d2.y, 0.0), world_normal, view_z);
+
+    return shadow / 5.0;
+}
+
 @fragment
 fn fragment(in: FragmentInput) -> @location(0) vec4<f32> {
     var output_color: vec4<f32> = textureSample(base_texture, base_sampler, in.uv);
@@ -158,8 +179,8 @@ fn fragment(in: FragmentInput) -> @location(0) vec4<f32> {
     ), in.world_position);
 
 #ifdef VERTEX_UVS_LIGHTMAP
-    let shadow = fetch_directional_shadow(0u, in.world_position, in.world_normal, view_z);
-    output_color = vec4<f32>(output_color.xyz * (shadow * 0.2 + 0.8), output_color.w);
+    let shadow = sample_soft_shadow(in.world_position, in.world_normal, view_z);
+    output_color = vec4<f32>(output_color.xyz * (shadow * 0.5 + 0.5), output_color.w);
 
     var lightmap = textureSample(lightmap_texture, lightmap_sampler, (in.lightmap_uv + material.lightmap_uv_offset) * material.lightmap_uv_scale);
     output_color = vec4<f32>(output_color.xyz * lightmap.xyz * 2.0, output_color.w);

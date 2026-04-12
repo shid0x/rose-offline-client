@@ -5,7 +5,7 @@ use bevy::{
 
 use crate::components::PlayerCharacter;
 
-const PROJECTION_HALF_SIZE: f32 = 40.0;
+const PROJECTION_HALF_SIZE: f32 = 20.0;
 const PROJECTION_HALF_DEPTH: f32 = 100.0;
 
 pub fn directional_light_system(
