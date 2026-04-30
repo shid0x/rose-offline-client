@@ -42,6 +42,7 @@ pub struct UiStateDebugWindows {
     pub object_inspector_open: bool,
     pub physics_open: bool,
     pub skill_list_open: bool,
+    pub spawn_editor_open: bool,
     pub zone_list_open: bool,
     pub zone_lighting_open: bool,
     pub zone_time_open: bool,

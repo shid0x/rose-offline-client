@@ -23,6 +23,7 @@ mod server_list;
 mod social_state;
 mod sound_cache;
 mod sound_settings;
+mod spawn_editor;
 mod specular_texture;
 mod ui_resources;
 mod virtual_filesystem;
@@ -55,6 +56,7 @@ pub use server_list::{ServerList, ServerListGameServer, ServerListWorldServer};
 pub use social_state::{PendingFriendRequest, PrivateChatEntry, SocialState};
 pub use sound_cache::SoundCache;
 pub use sound_settings::SoundSettings;
+pub use spawn_editor::{PendingNewSpawn, SpawnEditorState};
 pub use specular_texture::SpecularTexture;
 pub use ui_resources::{
     load_ui_resources, ui_requested_cursor_apply_system, update_ui_resources, UiCursorType,

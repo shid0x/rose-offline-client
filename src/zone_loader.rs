@@ -67,6 +67,7 @@ pub enum ZoneLoadError {
 pub struct ZoneLoaderBlock {
     pub block_x: usize,
     pub block_y: usize,
+    pub ifo_path: PathBuf,
     pub him: HimFile,
     pub til: Option<TilFile>,
     pub ifo: Option<IfoFile>,
@@ -79,6 +80,29 @@ pub struct ZoneNpc {
     pub npc_id: NpcId,
 }
 
+#[derive(Clone)]
+pub struct ZoneMonsterSpawnEntry {
+    pub name: String,
+    pub npc_id: u32,
+    pub count: u32,
+}
+
+#[derive(Clone)]
+pub struct ZoneMonsterSpawn {
+    pub source_ifo_path: PathBuf,
+    pub source_block_x: usize,
+    pub source_block_y: usize,
+    pub source_spawn_index: usize,
+    pub position: Vec3,
+    pub name: String,
+    pub range: u32,
+    pub interval: u32,
+    pub limit_count: u32,
+    pub tactic_points: u32,
+    pub basic_spawns: Vec<ZoneMonsterSpawnEntry>,
+    pub tactic_spawns: Vec<ZoneMonsterSpawnEntry>,
+}
+
 #[derive(TypeUuid, TypePath)]
 #[uuid = "596e2c17-f2dd-4276-8df4-1e94dc0d056b"]
 pub struct ZoneLoaderAsset {
@@ -89,6 +113,7 @@ pub struct ZoneLoaderAsset {
     pub zsc_deco: ZscFile,
     pub blocks: Vec<Option<Box<ZoneLoaderBlock>>>,
     pub npcs: Vec<ZoneNpc>,
+    pub monster_spawns: Vec<ZoneMonsterSpawn>,
 }
 
 impl ZoneLoaderAsset {
@@ -230,6 +255,7 @@ async fn load_zone<'a, 'b>(
         .filter_map(|result| result.ok());
 
     let mut npcs = Vec::new();
+    let mut monster_spawns = Vec::new();
     let mut blocks = Vec::new();
     blocks.resize_with(64 * 64, || None);
     for block in zone_blocks_iterator {
@@ -258,6 +284,43 @@ async fn load_zone<'a, 'b>(
                     ) + objects_offset,
                 });
             }
+
+            for (spawn_index, spawn) in ifo.monster_spawns.iter().enumerate() {
+                monster_spawns.push(ZoneMonsterSpawn {
+                    source_ifo_path: block.ifo_path.clone(),
+                    source_block_x: block.block_x,
+                    source_block_y: block.block_y,
+                    source_spawn_index: spawn_index,
+                    position: Vec3::new(
+                        spawn.object.position.x,
+                        spawn.object.position.y,
+                        spawn.object.position.z,
+                    ) + objects_offset,
+                    name: spawn.name.clone(),
+                    range: spawn.range,
+                    interval: spawn.interval,
+                    limit_count: spawn.limit_count,
+                    tactic_points: spawn.tactic_points,
+                    basic_spawns: spawn
+                        .basic_spawns
+                        .iter()
+                        .map(|entry| ZoneMonsterSpawnEntry {
+                            name: entry.name.clone(),
+                            npc_id: entry.id,
+                            count: entry.count,
+                        })
+                        .collect(),
+                    tactic_spawns: spawn
+                        .tactic_spawns
+                        .iter()
+                        .map(|entry| ZoneMonsterSpawnEntry {
+                            name: entry.name.clone(),
+                            npc_id: entry.id,
+                            count: entry.count,
+                        })
+                        .collect(),
+                });
+            }
         }
 
         blocks[index] = Some(block);
@@ -271,6 +334,7 @@ async fn load_zone<'a, 'b>(
         zsc_deco,
         blocks,
         npcs,
+        monster_spawns,
     }));
     Ok(())
 }
@@ -299,10 +363,8 @@ async fn load_block_files<'a>(
         None
     };
 
-    let ifo = if let Ok(data) = load_context
-        .read_asset_bytes(zone_path.join(format!("{}_{}.IFO", block_x, block_y)))
-        .await
-    {
+    let ifo_path = zone_path.join(format!("{}_{}.IFO", block_x, block_y));
+    let ifo = if let Ok(data) = load_context.read_asset_bytes(ifo_path.clone()).await {
         RoseFile::read(RoseFileReader::from(&data), &Default::default()).ok()
     } else {
         None
@@ -335,6 +397,7 @@ async fn load_block_files<'a>(
     Ok(Box::new(ZoneLoaderBlock {
         block_x,
         block_y,
+        ifo_path,
         til,
         him,
         ifo,
