@@ -18,13 +18,17 @@ use rose_file_readers::{
     RoseFileWriter,
 };
 use rose_game_common::components::Npc;
+use rose_game_common::messages::client::ClientMessage;
 
 use crate::{
     components::{
         ClientEntityName, ColliderParent, ZoneObject, COLLISION_FILTER_CLICKABLE,
         COLLISION_GROUP_ZONE_TERRAIN,
     },
-    resources::{AppState, CurrentZone, GameData, PendingNewSpawn, SpawnEditorState, VfsResource},
+    resources::{
+        AppState, CurrentZone, GameConnection, GameData, PendingNewSpawn, SpawnEditorState,
+        VfsResource,
+    },
     ui::UiStateDebugWindows,
     zone_loader::{ZoneLoaderAsset, ZoneMonsterSpawn, ZoneMonsterSpawnEntry},
 };
@@ -61,10 +65,13 @@ pub fn ui_debug_spawn_editor_system(
     vfs: Option<Res<VfsResource>>,
     game_data: Res<GameData>,
     app_state: Res<State<AppState>>,
+    game_connection: Option<Res<GameConnection>>,
     mut pick_params: SpawnEditorPickParams,
     mut status: bevy::prelude::Local<UiDebugSpawnEditorStatus>,
 ) {
-    if !ui_state_debug_windows.debug_ui_open || !matches!(app_state.get(), AppState::ZoneViewer) {
+    if !ui_state_debug_windows.debug_ui_open
+        || !spawn_editor_enabled_for_state(&spawn_editor_state, app_state.get())
+    {
         despawn_previews(
             &mut commands,
             &mut spawn_editor_state,
@@ -125,6 +132,8 @@ pub fn ui_debug_spawn_editor_system(
         zone_asset,
         &vfs,
         &game_data,
+        game_connection.as_deref(),
+        current_zone.id,
         &mut status,
     );
 
@@ -154,6 +163,7 @@ pub fn ui_debug_spawn_editor_system(
 
             let object_offset = zone_object_offset(zone_asset);
             let mut save_spawn = None;
+            let mut reload_spawn = None;
             {
                 let spawn = &mut zone_asset.monster_spawns[selected_index];
                 draw_spawn_editor(ui, selected_index, spawn, &game_data);
@@ -161,6 +171,9 @@ pub fn ui_debug_spawn_editor_system(
                 ui.horizontal(|ui| {
                     if ui.button("Save IFO").clicked() {
                         save_spawn = Some(spawn.clone());
+                    }
+                    if ui.button("Reload Server").clicked() {
+                        reload_spawn = Some(spawn.clone());
                     }
                     if !status.message.is_empty() {
                         ui.separator();
@@ -173,8 +186,16 @@ pub fn ui_debug_spawn_editor_system(
                 if let Some(vfs) = vfs.as_ref() {
                     match save_spawn_to_ifo(&vfs.vfs, &spawn, object_offset) {
                         Ok(()) => {
-                            status.message =
-                                format!("Saved {}", spawn.source_ifo_path.to_string_lossy());
+                            status.message = format!(
+                                "Saved {}; {}",
+                                spawn.source_ifo_path.to_string_lossy(),
+                                send_spawn_reload_command(
+                                    game_connection.as_deref(),
+                                    current_zone.id.get(),
+                                    spawn.source_block_x,
+                                    spawn.source_block_y,
+                                )
+                            );
                         }
                         Err(error) => {
                             status.message = format!("Save failed: {error:#}");
@@ -184,7 +205,24 @@ pub fn ui_debug_spawn_editor_system(
                     status.message = "Save failed: no VFS resource".to_string();
                 }
             }
+
+            if let Some(spawn) = reload_spawn {
+                status.message = send_spawn_reload_command(
+                    game_connection.as_deref(),
+                    current_zone.id.get(),
+                    spawn.source_block_x,
+                    spawn.source_block_y,
+                );
+            }
         });
+}
+
+fn spawn_editor_enabled_for_state(
+    spawn_editor_state: &SpawnEditorState,
+    app_state: &AppState,
+) -> bool {
+    matches!(app_state, AppState::ZoneViewer)
+        || (matches!(app_state, AppState::Game) && spawn_editor_state.active)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -275,6 +313,8 @@ fn draw_new_spawn_prompt(
     zone_asset: &mut ZoneLoaderAsset,
     vfs: &Option<Res<VfsResource>>,
     game_data: &GameData,
+    game_connection: Option<&GameConnection>,
+    zone_id: rose_data::ZoneId,
     status: &mut UiDebugSpawnEditorStatus,
 ) {
     let Some(mut pending) = spawn_editor_state.pending_new_spawn.take() else {
@@ -360,9 +400,18 @@ fn draw_new_spawn_prompt(
         if let Some(vfs) = vfs.as_ref() {
             match add_spawn_to_ifo(&vfs.vfs, zone_asset, pending) {
                 Ok(spawn_index) => {
+                    let spawn = &zone_asset.monster_spawns[spawn_index];
                     spawn_editor_state.selected_spawn = Some(spawn_index);
                     ui_state_debug_windows.spawn_editor_open = true;
-                    status.message = "Added spawn".to_string();
+                    status.message = format!(
+                        "Added spawn; {}",
+                        send_spawn_reload_command(
+                            game_connection,
+                            zone_id.get(),
+                            spawn.source_block_x,
+                            spawn.source_block_y,
+                        )
+                    );
                 }
                 Err(error) => {
                     status.message = format!("Add failed: {error:#}");
@@ -373,6 +422,26 @@ fn draw_new_spawn_prompt(
         }
     } else {
         spawn_editor_state.pending_new_spawn = Some(pending);
+    }
+}
+
+fn send_spawn_reload_command(
+    game_connection: Option<&GameConnection>,
+    zone_id: u16,
+    block_x: usize,
+    block_y: usize,
+) -> String {
+    if let Some(game_connection) = game_connection {
+        match game_connection.client_message_tx.send(ClientMessage::Chat {
+            text: format!("/spawn_reload {zone_id} {block_x} {block_y}"),
+        }) {
+            Ok(()) => {
+                format!("requested server reload for zone {zone_id} block {block_x}_{block_y}")
+            }
+            Err(_) => "server reload request failed: game connection is closed".to_string(),
+        }
+    } else {
+        "no server reload because game server is not connected".to_string()
     }
 }
 

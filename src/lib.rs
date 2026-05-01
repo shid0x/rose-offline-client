@@ -827,7 +827,7 @@ fn run_client(config: &Config, app_state: AppState, mut systems_config: SystemsC
             debug_render_collider_system,
             debug_render_skeleton_system,
             debug_render_directional_light_system,
-            debug_render_spawn_system.run_if(in_state(AppState::ZoneViewer)),
+            debug_render_spawn_system,
         )
             .in_set(GameStages::DebugRender),
     );

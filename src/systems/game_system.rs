@@ -8,7 +8,7 @@ use crate::{
     animation::CameraAnimation,
     components::PlayerCharacter,
     events::ZoneEvent,
-    resources::GameConnection,
+    resources::{GameConnection, SpawnEditorState},
     systems::{FreeCamera, OrbitCamera},
 };
 
@@ -16,7 +16,10 @@ pub fn game_state_enter_system(
     mut commands: Commands,
     query_cameras: Query<Entity, With<Camera3d>>,
     query_player: Query<Entity, With<PlayerCharacter>>,
+    mut spawn_editor_state: bevy::prelude::ResMut<SpawnEditorState>,
 ) {
+    spawn_editor_state.active = false;
+
     // Reset camera
     let player_entity = query_player.single();
     for entity in query_cameras.iter() {

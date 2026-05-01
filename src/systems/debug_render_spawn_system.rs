@@ -1,7 +1,7 @@
-use bevy::prelude::{Assets, Color, Gizmos, Res};
+use bevy::prelude::{Assets, Color, Gizmos, Res, State};
 
 use crate::{
-    resources::{CurrentZone, SpawnEditorState},
+    resources::{AppState, CurrentZone, SpawnEditorState},
     ui::UiStateDebugWindows,
     zone_loader::ZoneLoaderAsset,
 };
@@ -9,11 +9,15 @@ use crate::{
 pub fn debug_render_spawn_system(
     ui_state_debug_windows: Res<UiStateDebugWindows>,
     spawn_editor_state: Res<SpawnEditorState>,
+    app_state: Res<State<AppState>>,
     current_zone: Option<Res<CurrentZone>>,
     zone_loader_assets: Res<Assets<ZoneLoaderAsset>>,
     mut gizmos: Gizmos,
 ) {
     if !ui_state_debug_windows.debug_ui_open {
+        return;
+    }
+    if matches!(app_state.get(), AppState::Game) && !spawn_editor_state.active {
         return;
     }
 

@@ -17,6 +17,7 @@ pub struct PendingNewSpawn {
 
 #[derive(Default, Resource)]
 pub struct SpawnEditorState {
+    pub active: bool,
     pub selected_spawn: Option<usize>,
     pub preview_entities: Vec<Option<Entity>>,
     pub preview_npc_ids: Vec<Option<u32>>,

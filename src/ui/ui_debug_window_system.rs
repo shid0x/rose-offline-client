@@ -3,7 +3,7 @@ use bevy::{
     math::{EulerRot, Vec3},
     prelude::{
         Camera3d, Commands, Entity, KeyCode, Local, NextState, Query, Res, ResMut, Resource,
-        Transform, With,
+        State, Transform, With,
     },
 };
 use bevy_egui::{egui, EguiContexts};
@@ -11,7 +11,7 @@ use rose_game_common::messages::client::ClientMessage;
 
 use crate::{
     components::PlayerCharacter,
-    resources::{AppState, DebugInspector, GameConnection, WorldConnection},
+    resources::{AppState, DebugInspector, GameConnection, SpawnEditorState, WorldConnection},
     systems::{FreeCamera, OrbitCamera},
 };
 
@@ -65,6 +65,8 @@ pub fn ui_debug_menu_system(
     world_connection: Option<Res<WorldConnection>>,
     keyboard: Res<Input<KeyCode>>,
     mut debug_inspector: ResMut<DebugInspector>,
+    mut spawn_editor_state: ResMut<SpawnEditorState>,
+    app_state: Res<State<AppState>>,
     mut app_state_next: ResMut<NextState<AppState>>,
 ) {
     if keyboard.pressed(KeyCode::ControlLeft) && keyboard.just_pressed(KeyCode::D) {
@@ -136,35 +138,12 @@ pub fn ui_debug_menu_system(
                 );
 
                 if ui_state_debug_menu.selected_camera_type != previous_camera_type {
-                    for (camera_entity, camera_transform) in query_cameras.iter() {
-                        match ui_state_debug_menu.selected_camera_type {
-                            DebugCameraType::Orbit => {
-                                if let Some(player_entity) = player_entity {
-                                    commands
-                                        .entity(camera_entity)
-                                        .remove::<FreeCamera>()
-                                        .insert(OrbitCamera::new(
-                                            player_entity,
-                                            Vec3::new(0.0, 1.7, 0.0),
-                                            17.0,
-                                        ));
-                                }
-                            }
-                            DebugCameraType::Free => {
-                                let (yaw, pitch, _roll) =
-                                    camera_transform.rotation.to_euler(EulerRot::YXZ);
-
-                                commands
-                                    .entity(camera_entity)
-                                    .remove::<OrbitCamera>()
-                                    .insert(FreeCamera::new(
-                                        camera_transform.translation,
-                                        yaw.to_degrees(),
-                                        pitch.to_degrees(),
-                                    ));
-                            }
-                        }
-                    }
+                    apply_debug_camera(
+                        &mut commands,
+                        &query_cameras,
+                        player_entity,
+                        ui_state_debug_menu.selected_camera_type,
+                    );
                 }
             });
 
@@ -226,7 +205,64 @@ pub fn ui_debug_menu_system(
 
                 ui.checkbox(&mut ui_state_debug_windows.camera_info_open, "Camera Info");
                 ui.checkbox(&mut ui_state_debug_windows.physics_open, "Physics");
+
+                ui.separator();
+                if ui
+                    .checkbox(&mut spawn_editor_state.active, "Spawn Editor Mode")
+                    .clicked()
+                {
+                    ui_state_debug_windows.spawn_editor_open = spawn_editor_state.active;
+                    if matches!(app_state.get(), AppState::Game) {
+                        ui_state_debug_menu.selected_camera_type = if spawn_editor_state.active {
+                            DebugCameraType::Free
+                        } else {
+                            DebugCameraType::Orbit
+                        };
+                        apply_debug_camera(
+                            &mut commands,
+                            &query_cameras,
+                            player_entity,
+                            ui_state_debug_menu.selected_camera_type,
+                        );
+                    }
+                }
             });
         });
     });
+}
+
+fn apply_debug_camera(
+    commands: &mut Commands,
+    query_cameras: &Query<(Entity, &Transform), With<Camera3d>>,
+    player_entity: Option<Entity>,
+    camera_type: DebugCameraType,
+) {
+    for (camera_entity, camera_transform) in query_cameras.iter() {
+        match camera_type {
+            DebugCameraType::Orbit => {
+                if let Some(player_entity) = player_entity {
+                    commands
+                        .entity(camera_entity)
+                        .remove::<FreeCamera>()
+                        .insert(OrbitCamera::new(
+                            player_entity,
+                            Vec3::new(0.0, 1.7, 0.0),
+                            17.0,
+                        ));
+                }
+            }
+            DebugCameraType::Free => {
+                let (yaw, pitch, _roll) = camera_transform.rotation.to_euler(EulerRot::YXZ);
+
+                commands
+                    .entity(camera_entity)
+                    .remove::<OrbitCamera>()
+                    .insert(FreeCamera::new(
+                        camera_transform.translation,
+                        yaw.to_degrees(),
+                        pitch.to_degrees(),
+                    ));
+            }
+        }
+    }
 }

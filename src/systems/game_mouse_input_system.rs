@@ -19,7 +19,7 @@ use crate::{
         COLLISION_FILTER_CLICKABLE, COLLISION_GROUP_PHYSICS_TOY, COLLISION_GROUP_PLAYER,
     },
     events::{MoveDestinationEffectEvent, PlayerCommandEvent},
-    resources::{SelectedTarget, UiCursorType, UiRequestedCursor},
+    resources::{SelectedTarget, SpawnEditorState, UiCursorType, UiRequestedCursor},
     systems::stealth_visibility_system::is_hidden_from_local_player,
 };
 
@@ -50,9 +50,14 @@ pub fn game_mouse_input_system(
     mut move_destination_effect_events: EventWriter<MoveDestinationEffectEvent>,
     mut selected_target: ResMut<SelectedTarget>,
     mut ui_requested_cursor: ResMut<UiRequestedCursor>,
+    spawn_editor_state: Res<SpawnEditorState>,
 ) {
     selected_target.hover = None;
     ui_requested_cursor.world_cursor = UiCursorType::Default;
+
+    if spawn_editor_state.active {
+        return;
+    }
 
     let Ok(window) = query_window.get_single() else {
         return;
